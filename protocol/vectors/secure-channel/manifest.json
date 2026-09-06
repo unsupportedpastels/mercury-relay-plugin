@@ -1,0 +1,47 @@
+{
+  "artifacts": {
+    "corpus.json": {
+      "bytes": 7889,
+      "sha256": "f7a1e77af398fdb890a95e3d28960eec852098ac090deb5822997dc726fd49a1"
+    }
+  },
+  "contains_live_hosts": false,
+  "contains_secrets": false,
+  "dependency_provenance": [
+    {
+      "name": "noiseprotocol",
+      "role": "phase0_reference_only",
+      "version": "0.3.1"
+    },
+    {
+      "name": "cryptography",
+      "role": "x25519_chachapoly_backend",
+      "version": "50.0.1"
+    },
+    {
+      "name": "swift-libp2p/swift-noise",
+      "role": "swift_phase0_consumer",
+      "version": "0adfd28786322784860fb3c8f228591c6e8fd92f"
+    },
+    {
+      "name": "org.signal.forks:noise-java",
+      "role": "kotlin_phase0_consumer",
+      "version": "0.1.1"
+    }
+  ],
+  "generator_version": "2",
+  "notes": [
+    "All keys, installation IDs, pairing capabilities, plaintexts, and ciphertexts are deterministic synthetic fixtures.",
+    "Deterministic ephemeral keys are forbidden outside vector generation and tests.",
+    "Library interoperability does not replace independent review of production wrappers."
+  ],
+  "schema_version": "mercury.noise.corpus.v1",
+  "source_urls": [
+    "https://noiseprotocol.org/noise.html",
+    "https://noiseexplorer.com/patterns/XK/",
+    "https://github.com/plizonczyk/noiseprotocol/tree/v0.3.1",
+    "https://github.com/swift-libp2p/swift-noise/commit/0adfd28786322784860fb3c8f228591c6e8fd92f",
+    "https://github.com/signalapp/noise-java/tree/noise-java-0.1.1"
+  ],
+  "synthetic": true
+}

@@ -1,0 +1,20 @@
+{"jsonrpc":"2.0","method":"event","params":{"type":"gateway.ready","payload":{"skin":{},"change_events":true}}}
+{"jsonrpc":"2.0","id":1,"method":"session.create","params":{"close_on_disconnect":false,"profile":"fixture_profile","cwd":"<fixture-cwd>"}}
+{"jsonrpc":"2.0","id":1,"result":{"session_id":"fixture-runtime-001","stored_session_id":"fixture-durable-001","message_count":0,"messages":[],"info":{"profile_name":"fixture_profile","cwd":"<fixture-cwd>","lazy":true}}}
+{"jsonrpc":"2.0","id":2,"method":"session.resume","params":{"session_id":"fixture-durable-001","profile":"fixture_profile","close_on_disconnect":false}}
+{"jsonrpc":"2.0","id":2,"result":{"session_id":"fixture-runtime-002","session_key":"fixture-durable-001","resumed":"fixture-durable-001","messages":[],"message_count":2,"running":false,"inflight":null,"info":{}}}
+{"jsonrpc":"2.0","id":3,"method":"prompt.submit","params":{"session_id":"fixture-runtime-002","text":"fixture prompt"}}
+{"jsonrpc":"2.0","id":3,"result":{"status":"streaming"}}
+{"jsonrpc":"2.0","method":"event","params":{"type":"message.start","session_id":"fixture-runtime-002","payload":{"text":""}}}
+{"jsonrpc":"2.0","method":"event","params":{"type":"message.delta","session_id":"fixture-runtime-002","payload":{"text":"HE"}}}
+{"jsonrpc":"2.0","method":"event","params":{"type":"message.delta","session_id":"fixture-runtime-002","payload":{"text":" WORLD"}}}
+{"jsonrpc":"2.0","method":"event","params":{"type":"message.delta","session_id":"fixture-runtime-002","payload":{"text":" SPACES"}}}
+{"jsonrpc":"2.0","method":"event","params":{"type":"message.complete","session_id":"fixture-runtime-002","payload":{"text":"HELLO WORLD SPACES","status":"complete"}}}
+{"jsonrpc":"2.0","id":4,"method":"session.interrupt","params":{"session_id":"fixture-runtime-002"}}
+{"jsonrpc":"2.0","id":4,"result":{"status":"interrupted"}}
+{"jsonrpc":"2.0","method":"event","params":{"type":"approval.request","session_id":"fixture-runtime-002","payload":{"request_id":"fixture-request-001","command":"<fixture-command>","choices":["once","deny"]}}}
+{"jsonrpc":"2.0","id":5,"method":"approval.respond","params":{"session_id":"fixture-runtime-002","request_id":"fixture-request-001","choice":"once","all":false}}
+{"jsonrpc":"2.0","id":5,"result":{"resolved":1}}
+{"jsonrpc":"2.0","method":"event","params":{"type":"clarify.request","session_id":"fixture-runtime-002","payload":{"request_id":"fixture-request-002","question":"fixture clarification?","choices":[],"multi_select":false}}}
+{"jsonrpc":"2.0","id":6,"method":"clarify.respond","params":{"request_id":"fixture-request-002","answer":""}}
+{"jsonrpc":"2.0","id":6,"result":{"status":"ok"}}

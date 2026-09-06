@@ -1,0 +1,142 @@
+/* Mercury Relay management page. Uses the dashboard's own CSS variables so it
+   follows the active theme; adds only layout and the QR/fingerprint styles. */
+
+.mr-page {
+  max-width: 880px;
+  margin: 0 auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.mr-card {
+  border: 1px solid var(--border, #2a2a2a);
+  border-radius: 12px;
+  padding: 20px;
+  background: var(--card, rgba(255, 255, 255, 0.02));
+}
+
+.mr-card h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.mr-muted {
+  color: var(--muted-foreground, #8a8a8a);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.mr-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.mr-spread {
+  justify-content: space-between;
+}
+
+.mr-btn {
+  border: 1px solid var(--border, #2a2a2a);
+  background: var(--primary, #3b6cf6);
+  color: var(--primary-foreground, #fff);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.mr-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.mr-btn.mr-ghost {
+  background: transparent;
+  color: var(--foreground, #eee);
+}
+
+.mr-btn.mr-danger {
+  background: transparent;
+  border-color: var(--destructive, #b3403a);
+  color: var(--destructive, #d9635d);
+}
+
+.mr-qr-wrap {
+  display: flex;
+  gap: 24px;
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.mr-qr {
+  background: #fff;
+  padding: 14px;
+  border-radius: 12px;
+  line-height: 0;
+}
+
+.mr-qr img,
+.mr-qr canvas {
+  width: 220px;
+  height: 220px;
+  image-rendering: pixelated;
+}
+
+.mr-fingerprint {
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 18px;
+  letter-spacing: 2px;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.mr-device {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border, #232323);
+}
+
+.mr-pill {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border, #333);
+  color: var(--muted-foreground, #9a9a9a);
+}
+
+.mr-pill.mr-ok {
+  color: #4ea56a;
+  border-color: #2f6b45;
+}
+
+.mr-pill.mr-warn {
+  color: #d0a53c;
+  border-color: #6b5a2f;
+}
+
+.mr-banner {
+  border-radius: 8px;
+  padding: 10px 14px;
+  font-size: 13px;
+  border: 1px solid var(--border, #333);
+}
+
+.mr-banner.mr-error {
+  border-color: #7a2f2b;
+  color: #e08a85;
+}
+
+.mr-countdown {
+  font-variant-numeric: tabular-nums;
+}

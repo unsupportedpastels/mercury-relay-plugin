@@ -1,0 +1,11 @@
+name: mercury-relay
+version: 0.1.0
+description: "Server-side E2EE Relay transport for Mercury mobile clients."
+kind: backend
+manifest_version: 2
+api_version: 1
+# cryptography ships with Hermes itself; the pinned pure-Python Noise runtime
+# is vendored under src/mercury_relay_plugin/_vendor/ so installation needs no
+# pip step (Hermes never auto-installs plugin dependencies).
+python_dependencies:
+  - "cryptography>=50.0,<51"

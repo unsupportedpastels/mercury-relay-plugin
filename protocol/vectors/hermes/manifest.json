@@ -1,0 +1,13 @@
+{
+  "schema_version": "mercury.relay.hermes.vectors.v1",
+  "generator_version": "1",
+  "synthetic": true,
+  "contains_secrets": false,
+  "contains_live_hosts": false,
+  "artifacts": {
+    "corpus.json": {
+      "bytes": 2235,
+      "sha256": "e168580c2ee7d92733130838fe7ba12c9b852d131c57fcfa553889e6389b776c"
+    }
+  }
+}

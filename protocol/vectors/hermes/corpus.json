@@ -1,0 +1,49 @@
+{
+  "schema_version": "mercury.relay.hermes.vectors.v1",
+  "generator_version": "1",
+  "synthetic": true,
+  "contains_secrets": false,
+  "contains_live_hosts": false,
+  "fixtures": [
+    {
+      "path": "../../fixtures/hermes/rest.json",
+      "sha256": "138e7dd2b8cb4992f8c9f3c179bf45baa2b76301c4163b730e42be5883b69e2b",
+      "bytes": 3396,
+      "surface": "http",
+      "records": [
+        "status",
+        "session-list",
+        "transcript"
+      ]
+    },
+    {
+      "path": "../../fixtures/hermes/ws.jsonl",
+      "sha256": "e85421887a8bece8279e5dd8d99236a6f8cd48d8de6f58d5406c3b141efaa153",
+      "bytes": 2665,
+      "surface": "ws",
+      "frame_count": 20,
+      "frame_sha256": [
+        "9b3916e376ad21b8d321e9342ebb2fa6a81000f700f9089202c9eb662f9844a9",
+        "5f7da88bce03d6bc6f5fd751e992b95dc0e203d82e03afff6edffe369aad5a2a",
+        "3e26b6ed253c279d94986f48a0bfc8c16b768b7bfa9079dcb944f1504e49919b",
+        "b88ddf1512e5527a31c11c9b6c5f330d6e6231a9bb18c87a2e1e34d55d8cf6f5",
+        "662963e1ab3379b8746ddd02e16e6e8a9c8deda9756ef3924e82cbbf8e7ddf39",
+        "aa969106d0a6b2eb67ff35b83a8941aaa340753ca751758e86d158b231b08179",
+        "8a2ecf39595288844f9f7729f5cd968c79ed299c6acdd7f9a58af293c61d0368",
+        "27f7c3872a3cb8019e8499e399ca6bbd2342d992962b11902d8b8083645803f4",
+        "7ea3a5c43b3046bf0ea5d06d2e0048823db076b8fbe3f876ffe2658d4c615f7d",
+        "71d6926a0797b9131c48a667b7a27d06d42278baf1696e2aef9796602b7d94ef",
+        "90955384b0e19b7e766a6756073f13182b59ba5293969b461d071d86d9e6c8ef",
+        "98f89d4820e2665ebd79d94dcd840046725f9434629acedd2e82ab3933c83747",
+        "a8afb79bad4a697c4efe689fb5e86b159c8035cccff2f31ea50fa8e2b98b0a4e",
+        "d3a40be2444613494ef3bd369a586bb4c42650828530e0e0653f7dd337ce5be3",
+        "677429cf73fca2c74686dd22e15990c3dc43fec6d7e889cf7efef0f80ef0bf38",
+        "fd97da5f9c9c9c312752ee49c51dd26463b96a5cd046c43fb1959675da4ca44b",
+        "1e3b438f3a7a1e1a13653ce257bd253eea9cc87b32730b522a25d2d0cef26a5e",
+        "7a957dddb4af8c21228f54bc6703e5b4257edd8200009f6d403b9f984138aa68",
+        "a694a0266aca3e888d90070c7b15fce9066cd9cd987f8f915380326a750fd86f",
+        "6df60e952d002a675d3bca8625bb0fb027ec094442ccb89981117de06a9d2916"
+      ]
+    }
+  ]
+}

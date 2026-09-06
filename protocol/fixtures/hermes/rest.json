@@ -1,0 +1,121 @@
+{
+  "fixture_schema": 1,
+  "surface": "http",
+  "scenario": "allowed-rest-v1",
+  "profile": "fixture_profile",
+  "synthetic": true,
+  "contains_secrets": false,
+  "contains_live_hosts": false,
+  "records": [
+    {
+      "id": "status",
+      "source_refs": [
+        {
+          "path": "hermes_cli/web_server.py",
+          "symbol": "get_status"
+        },
+        {
+          "path": "ios/Mercury/MercuryKit/Networking/HermesHTTPClient.swift",
+          "symbol": "HermesHTTPClient.get"
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/api/status",
+        "query": [],
+        "body_hex": ""
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/json",
+        "body_utf8": "{\"version\":\"fixture-hermes-0.20.5\",\"auth_required\":false,\"auth_flows\":[],\"auth_providers\":[],\"active_sessions\":0,\"fixture_liveness\":\"ok\"}"
+      }
+    },
+    {
+      "id": "session-list",
+      "source_refs": [
+        {
+          "path": "hermes_cli/web_routers/profiles.py",
+          "symbol": "get_profiles_sessions"
+        },
+        {
+          "path": "ios/Mercury/MercuryKit/Sessions/SessionsClient.swift",
+          "symbol": "SessionsClient.sessions"
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/api/profiles/sessions",
+        "query": [
+          [
+            "profile",
+            "fixture_profile"
+          ],
+          [
+            "limit",
+            "20"
+          ],
+          [
+            "offset",
+            "0"
+          ],
+          [
+            "order",
+            "recent"
+          ],
+          [
+            "archived",
+            "exclude"
+          ]
+        ],
+        "body_hex": ""
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/json",
+        "body_utf8": "{\"sessions\":[{\"id\":\"fixture-durable-001\",\"session_key\":\"fixture-key-001\",\"title\":\"fixture title\",\"preview\":\"fixture preview\",\"last_active\":\"2026-01-01T00:00:00Z\",\"message_count\":2,\"model\":\"fixture-model\",\"provider\":\"fixture-provider\",\"profile\":\"fixture_profile\",\"cwd\":\"<fixture-cwd>\",\"pinned\":false,\"archived\":false}],\"total\":1,\"limit\":20,\"offset\":0}"
+      }
+    },
+    {
+      "id": "transcript",
+      "source_refs": [
+        {
+          "path": "hermes_cli/web_routers/sessions.py",
+          "symbol": "get_session_messages"
+        },
+        {
+          "path": "ios/Mercury/MercuryKit/Sessions/SessionsClient.swift",
+          "symbol": "SessionsClient.transcript"
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "path": "/api/sessions/fixture-durable-001/messages",
+        "query": [
+          [
+            "profile",
+            "fixture_profile"
+          ],
+          [
+            "limit",
+            "100"
+          ],
+          [
+            "offset",
+            "0"
+          ],
+          [
+            "order",
+            "latest"
+          ]
+        ],
+        "body_hex": ""
+      },
+      "response": {
+        "status": 200,
+        "content_type": "application/json",
+        "body_utf8": "{\"session_id\":\"fixture-durable-001\",\"messages\":[{\"role\":\"user\",\"content\":\"fixture prompt\"},{\"role\":\"assistant\",\"content\":\"fixture answer\"}],\"pagination\":{\"limit\":100,\"offset\":0,\"order\":\"latest\",\"returned\":2}}"
+      }
+    }
+  ]
+}

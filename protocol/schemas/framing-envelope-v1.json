@@ -1,0 +1,117 @@
+{
+  "schema_version": "mercury.relay.framing-envelope.v1",
+  "encoding": "binary",
+  "byte_order": "network",
+  "noise_plaintext_max_bytes": 65519,
+  "logical_message_max_bytes": 16777216,
+  "header_size_bytes": 50,
+  "max_payload_bytes_per_record": 65469,
+  "max_fragment_count": 257,
+  "fields": [
+    {
+      "name": "magic",
+      "offset": 0,
+      "size": 2,
+      "type": "bytes",
+      "value_hex": "4d52"
+    },
+    {
+      "name": "version",
+      "offset": 2,
+      "size": 1,
+      "type": "uint8",
+      "allowed": [
+        1
+      ]
+    },
+    {
+      "name": "kind",
+      "offset": 3,
+      "size": 1,
+      "type": "uint8",
+      "allowed": [
+        1
+      ]
+    },
+    {
+      "name": "flags",
+      "offset": 4,
+      "size": 1,
+      "type": "uint8",
+      "allowed": [
+        0
+      ]
+    },
+    {
+      "name": "reserved",
+      "offset": 5,
+      "size": 1,
+      "type": "uint8",
+      "allowed": [
+        0
+      ]
+    },
+    {
+      "name": "fragment_index",
+      "offset": 6,
+      "size": 2,
+      "type": "uint16",
+      "allowed": "0..count-1"
+    },
+    {
+      "name": "fragment_count",
+      "offset": 8,
+      "size": 2,
+      "type": "uint16",
+      "allowed": "1..257 canonical"
+    },
+    {
+      "name": "logical_length",
+      "offset": 10,
+      "size": 4,
+      "type": "uint32",
+      "allowed": "0..16777216"
+    },
+    {
+      "name": "payload_length",
+      "offset": 14,
+      "size": 4,
+      "type": "uint32",
+      "allowed": "canonical"
+    },
+    {
+      "name": "channel_id",
+      "offset": 18,
+      "size": 16,
+      "type": "opaque_bytes"
+    },
+    {
+      "name": "message_id",
+      "offset": 34,
+      "size": 16,
+      "type": "opaque_bytes"
+    },
+    {
+      "name": "payload",
+      "offset": 50,
+      "size": "payload_length",
+      "type": "bytes",
+      "max_size": 65469
+    }
+  ],
+  "reserved_values_rejected": {
+    "version": [
+      2
+    ],
+    "kind": [
+      0,
+      2
+    ],
+    "flags": [
+      1
+    ],
+    "reserved": [
+      1
+    ]
+  }
+}

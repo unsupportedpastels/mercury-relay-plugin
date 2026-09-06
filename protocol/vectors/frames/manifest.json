@@ -1,0 +1,13 @@
+{
+  "schema_version": "mercury.relay.frames.corpus.v1",
+  "generator_version": "2",
+  "synthetic": true,
+  "contains_secrets": false,
+  "contains_live_hosts": false,
+  "artifacts": {
+    "corpus.json": {
+      "bytes": 445407,
+      "sha256": "341c839122b4005297bf2735d20206287306dc6c95b89a338d3afe235ea5d1c8"
+    }
+  }
+}

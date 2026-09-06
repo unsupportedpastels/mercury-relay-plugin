@@ -1,0 +1,14 @@
+{
+  "name": "mercury-relay",
+  "label": "Mercury Relay",
+  "description": "Pair and manage Mercury's server-side encrypted Relay transport.",
+  "icon": "Smartphone",
+  "version": "0.1.0",
+  "tab": {
+    "path": "/mercury-relay",
+    "position": "after:skills"
+  },
+  "entry": "dist/index.js",
+  "css": "dist/style.css",
+  "api": "plugin_api.py"
+}
