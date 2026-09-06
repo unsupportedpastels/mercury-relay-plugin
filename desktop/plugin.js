@@ -48,7 +48,7 @@ function h(type, props) {
 const API_BASE = '/api/plugins/mercury-relay'
 // Version of THIS desktop half. Kept in step with the plugin manifest by a
 // test; the gateway's plugin reports its own version over /update.
-const DESKTOP_PLUGIN_VERSION = '0.2.9'
+const DESKTOP_PLUGIN_VERSION = '0.2.10'
 // The public repo both halves install from; the desktop bridge re-clones it.
 const PLUGIN_REPO = 'unsupportedpastels/mercury-relay-plugin'
 
@@ -95,8 +95,12 @@ function injectStyles() {
     '.mr-row{display:flex;align-items:center;gap:12px;flex-wrap:wrap}',
     '.mr-spread{justify-content:space-between}',
     '.mr-qr-wrap{display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap}',
-    '.mr-qr{background:#fff;padding:12px;border-radius:12px;line-height:0}',
-    '.mr-qr svg{width:200px;height:200px;display:block}',
+    '.mr-qr{background:#fff;padding:12px;border-radius:12px;line-height:0;cursor:zoom-in}',
+    '.mr-qr svg{width:320px;height:320px;max-width:100%;display:block}',
+    '.mr-qr-overlay{position:fixed;inset:0;z-index:1000;background:rgba(0,0,0,.82);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;cursor:zoom-out}',
+    '.mr-qr-overlay .mr-qr{padding:24px;border-radius:16px;cursor:zoom-out}',
+    '.mr-qr-overlay .mr-qr svg{width:min(80vw,80vh);height:min(80vw,80vh);max-width:none}',
+    '.mr-qr-overlay .mr-muted{color:#ddd;font-size:14px}',
     '.mr-fingerprint{font-family:ui-monospace,Menlo,monospace;font-size:16px;letter-spacing:1.5px;font-weight:600;word-break:break-all}',
     '.mr-name{font-size:15px;font-weight:600;margin-bottom:2px}',
     '.mr-update-dot{width:8px;height:8px;border-radius:50%;background:#f2c64d;display:inline-block;margin-right:6px;animation:mr-pulse 1.4s ease-in-out infinite}',
@@ -247,6 +251,7 @@ function ActiveRelayPanel(props) {
   // status/devices can never render while gateway B is active (BR-06).
   const [offer, setOffer] = useState(null)
   const [copied, setCopied] = useState(null)
+  const [enlarged, setEnlarged] = useState(false)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
 
@@ -350,7 +355,7 @@ function ActiveRelayPanel(props) {
     setErr(null)
     props
       .rest('/pairing-offers', { method: 'POST', body: {} })
-      .then((o) => { setCopied(null); setOffer(o) })
+      .then((o) => { setCopied(null); setEnlarged(false); setOffer(o) })
       .catch((e) => setErr(e && e.message ? e.message : 'failed'))
       .finally(() => setBusy(false))
   }, [props])
@@ -472,7 +477,15 @@ function ActiveRelayPanel(props) {
           busy ? 'Generating…' : offer ? 'New QR' : 'Generate QR')),
       offer
         ? h('div', { className: 'mr-qr-wrap', style: { marginTop: '16px' } },
-            h(QrSvg, { svg: offer.qr_svg }),
+            // Drawn large by default and click-to-enlarge: a bigger target
+            // scans from further away, so phone cameras do not have to zoom
+            // in on a dense code (and overshoot it) to read it.
+            h(QrSvg, { svg: offer.qr_svg, onClick: () => setEnlarged(true), title: 'Click to enlarge' }),
+            enlarged
+              ? h('div', { className: 'mr-qr-overlay', onClick: () => setEnlarged(false) },
+                  h(QrSvg, { svg: offer.qr_svg }),
+                  h('div', { className: 'mr-muted' }, 'Scan with Mercury. Click anywhere to close.'))
+              : null,
             h('div', { style: { flex: '1', minWidth: '200px' } },
               h('div', { className: 'mr-muted' }, 'Offer'),
               h('div', { className: 'mr-fingerprint' }, offer.offer_id),
@@ -625,6 +638,8 @@ function QrSvg(props) {
   // The SVG is generated server-side and contains no script; render inline.
   return h('div', {
     className: 'mr-qr',
+    title: props.title,
+    onClick: props.onClick,
     dangerouslySetInnerHTML: { __html: props.svg || '' },
   })
 }

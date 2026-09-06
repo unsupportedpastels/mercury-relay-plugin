@@ -126,3 +126,25 @@ def test_pairing_code_is_copyable_but_never_rendered_as_text(source_path: Path) 
     assert "}, offer.pairing_payload)" not in src
     assert "mr-fingerprint' }, offer.pairing_payload" not in src
     assert 'mr-fingerprint" }, offer.pairing_payload' not in src
+
+
+@pytest.mark.parametrize("source_path", [PLUGIN_JS, DASHBOARD_JS], ids=["desktop", "dashboard"])
+def test_qr_is_large_and_click_to_enlarge(source_path: Path) -> None:
+    """Phone cameras auto-zoom on a small dense code and overshoot it. Both UI
+    halves draw the QR large by default and open a near full-screen copy on
+    click, so scanning works from a distance without zoom."""
+
+    src = source_path.read_text(encoding="utf-8")
+    assert "mr-qr-overlay" in src
+    assert "setEnlarged(true)" in src
+    assert "setEnlarged(false)" in src
+
+
+def test_qr_default_size_is_at_least_320px() -> None:
+    desktop = _source()
+    dashboard_css = (Path(__file__).parents[1] / "dashboard" / "dist" / "style.css").read_text(
+        encoding="utf-8"
+    )
+    assert ".mr-qr svg{width:320px;height:320px" in desktop
+    assert "width: 320px;" in dashboard_css
+    assert ".mr-qr svg{width:200px" not in desktop  # the old cramped size is gone

@@ -438,11 +438,15 @@ class AuthorizationRepository:
             self._expire_pending_in_state(state, now)
             existing = state.get("pairing_offer")
             if existing is not None and existing["status"] == "active":
-                if now < existing["expires_at"]:
-                    raise AuthorizationError("pairing offer already active")
-                expired = dict(existing)
-                expired["status"] = "expired"
-                state["pairing_offer"] = expired
+                # One offer at a time, but a new request from the owner
+                # supersedes the current one rather than failing: the UI that
+                # holds the old QR may be gone (page reload, gateway switch,
+                # the other management surface), and the capability can never
+                # be re-shown. The old offer becomes unusable immediately;
+                # a phone still holding it must scan the new QR.
+                replaced = dict(existing)
+                replaced["status"] = "expired"
+                state["pairing_offer"] = replaced
             offer_id = _new_identifier(
                 PAIRING_OFFER_ID_BYTES,
                 {state.get("pairing_offer", {}).get("offer_id", "")},
