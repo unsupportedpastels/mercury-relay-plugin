@@ -48,7 +48,7 @@ function h(type, props) {
 const API_BASE = '/api/plugins/mercury-relay'
 // Version of THIS desktop half. Kept in step with the plugin manifest by a
 // test; the gateway's plugin reports its own version over /update.
-const DESKTOP_PLUGIN_VERSION = '0.2.4'
+const DESKTOP_PLUGIN_VERSION = '0.2.5'
 // The public repo both halves install from; the desktop bridge re-clones it.
 const PLUGIN_REPO = 'unsupportedpastels/mercury-relay-plugin'
 
@@ -299,7 +299,18 @@ function ActiveRelayPanel(props) {
     setDesktopResult(null)
     try {
       const r = await installFn({ identifier: PLUGIN_REPO, force: true })
-      setDesktopResult(r && r.ok ? { ok: true } : { ok: false, error: (r && r.error) || 'failed' })
+      if (r && r.ok) {
+        setDesktopResult({ ok: true })
+        // The runtime loader swaps the plugin module when plugin.js changes,
+        // but this mounted page is still the old component. Leave the route
+        // and come back so the new version renders.
+        setTimeout(() => {
+          host.navigate('/')
+          setTimeout(() => host.navigate('/mercury-relay'), 400)
+        }, 1500)
+      } else {
+        setDesktopResult({ ok: false, error: (r && r.error) || 'failed' })
+      }
     } catch (e) {
       setDesktopResult({ ok: false, error: e && e.message ? e.message : 'failed' })
     } finally {
@@ -533,7 +544,7 @@ function UpdatesCard(props) {
     props.desktopResult
       ? h('div', { className: props.desktopResult.ok ? 'mr-banner' : 'mr-banner mr-error' },
           props.desktopResult.ok
-            ? 'Desktop plugin updated; it reloads automatically.'
+            ? 'Desktop plugin updated; reopening the page on the new version…'
             : 'Desktop plugin update failed: ' + props.desktopResult.error)
       : null,
     props.result
