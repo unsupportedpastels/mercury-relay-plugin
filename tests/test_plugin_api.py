@@ -89,6 +89,7 @@ def test_status_sanitizes_missing_hermes_contract(
         "max_controllers": 8,
         "relay_origin_configured": True,
         "relay_connected": False,
+        "relay_refusal": None,
         "relay_machine_id": None,
     }
     assert "private" not in str(payload)

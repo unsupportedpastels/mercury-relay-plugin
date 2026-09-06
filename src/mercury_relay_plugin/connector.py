@@ -190,6 +190,13 @@ class RelayConnectorService:
             return state
         return not self.closed
 
+    @property
+    def last_refusal(self) -> str | None:
+        """Why the hosted transport last refused us, when it reports it."""
+
+        value = getattr(self.connector, "last_refusal", None)
+        return value if isinstance(value, str) else None
+
     async def start(self) -> None:
         if self._accept_task is None and not self.closed:
             # A connector that opens its own transport (the hosted host

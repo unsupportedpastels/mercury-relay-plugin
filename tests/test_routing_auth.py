@@ -19,6 +19,8 @@ from mercury_relay_plugin.routing_auth import (  # noqa: E402
     RoutingTokenError,
     RoutingTokenIssuer,
     machine_id,
+    machine_id_check_char,
+    machine_id_display,
     verify_routing_token,
 )
 
@@ -198,3 +200,43 @@ def test_tokens_name_their_issuer_key_and_verification_checks_it() -> None:
     forged = other.mint(role=ROLE_HOST, installation_id=INSTALLATION, ttl_seconds=600)
     with pytest.raises(RoutingTokenError):
         verify_routing_token(forged, public_key=issuer.public_key, now=1_000_000)
+
+
+def test_machine_id_display_appends_a_check_character() -> None:
+    import base64
+
+    route_bytes = base64.urlsafe_b64decode("A" * 43 + "=")
+    pk = base64.urlsafe_b64decode("A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=")
+    shown = machine_id_display(route_bytes, pk)
+    assert shown == "MR-TNBSR-QZDX3-7NVQR-QSAN7-KRFL" + machine_id_check_char("TNBSRQZDX37NVQRQSAN7KRFL")  # noqa: E501
+    assert shown == "MR-TNBSR-QZDX3-7NVQR-QSAN7-KRFL6"
+    # The canonical (Worker/KV) form is the same 24 characters without the check.
+    assert shown[3:].replace("-", "")[:24] == machine_id(route_bytes, pk)[3:].replace("-", "")
+    issuer = _issuer()
+    assert issuer.machine_id_display(INSTALLATION).startswith("MR-")
+    assert len(issuer.machine_id_display(INSTALLATION)) == 32
+
+
+def test_machine_id_check_catches_substitutions_and_transpositions() -> None:
+    body = "TNBSRQZDX37NVQRQSAN7KRFL"
+    check = machine_id_check_char(body)
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+    for i in range(24):
+        for c in alphabet:
+            if c == body[i]:
+                continue
+            mutated = body[:i] + c + body[i + 1 :]
+            # The only blind spot is a difference of 31 (A<->7) at one position.
+            if {c, body[i]} == {"A", "7"}:
+                continue
+            assert machine_id_check_char(mutated) != check, (i, c)
+    for i in range(23):
+        if body[i] == body[i + 1]:
+            continue
+        swapped = body[:i] + body[i + 1] + body[i] + body[i + 2 :]
+        assert machine_id_check_char(swapped) != check, i
+    # The misread that cost an afternoon: O read as 0 is not even in the alphabet.
+    with pytest.raises(RoutingTokenError):
+        machine_id_check_char("2ABUW60C57NWOAEDU2UPEY55")
+    with pytest.raises(RoutingTokenError):
+        machine_id_check_char(body[:-1])
