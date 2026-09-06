@@ -145,6 +145,15 @@ class ManagementService:
         except Exception:
             return None
 
+    def relay_machine_id(self) -> str | None:
+        """The allowlist ID the owner pastes into the relay operations console."""
+
+        try:
+            identity = self.repository.identity_store.load_or_create()
+            return self._routing_issuer().machine_id(identity.installation_id)
+        except Exception:
+            return None
+
     def _relay_origin(self) -> str | None:
         try:
             return load_public_config(self.repository.paths).get("relay_origin")
@@ -283,6 +292,9 @@ class ManagementService:
             # Public key only; the owner copies this into the Worker's
             # ROUTING_ISSUER_PUBLIC_KEY binding.
             "routing_issuer_public_key": self.routing_issuer_public_key(),
+            # Machine ID: a hash over the installation route and issuer
+            # public key. Not a secret; it only ever admits this installation.
+            "relay_machine_id": self.relay_machine_id(),
             "operations": self.admission.metrics.snapshot()
             if self.admission.metrics is not None
             else None,

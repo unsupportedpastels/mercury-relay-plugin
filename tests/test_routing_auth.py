@@ -18,6 +18,7 @@ from mercury_relay_plugin.routing_auth import (  # noqa: E402
     RoutingIssuerStore,
     RoutingTokenError,
     RoutingTokenIssuer,
+    machine_id,
     verify_routing_token,
 )
 
@@ -157,3 +158,43 @@ def test_all_minted_tokens_pass_the_lifetime_caps() -> None:
         ttl_seconds=AUTHORIZED_DEVICE_TOKEN_TTL_SECONDS,
     )
     assert verify_routing_token(dev, public_key=issuer.public_key, now=1_000_000)
+
+
+def test_machine_id_matches_worker_reference_vector() -> None:
+    # Shared with worker/test/relay.spec.ts: route "A"*43 and the Worker
+    # test-suite issuer public key A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg.
+    import base64
+
+    route_bytes = base64.urlsafe_b64decode("A" * 43 + "=")
+    pk = base64.urlsafe_b64decode("A6EHv_POEL4dcN0Y50vAmWfk1jCbpQ1fHdyGZBJVMbg=")
+    assert machine_id(route_bytes, pk) == "MR-TNBS-RQZD-X37N-VQRQ-SAN7-KRFL"
+    # Bound to the route: the same key on another installation is another ID.
+    other = machine_id(b"\x01" * 32, pk)
+    assert other != "MR-TNBS-RQZD-X37N-VQRQ-SAN7-KRFL"
+    assert other.startswith("MR-") and len(other) == 32
+    issuer = _issuer()
+    assert issuer.machine_id(INSTALLATION) == machine_id(INSTALLATION, issuer.public_key)
+    with pytest.raises(RoutingTokenError):
+        machine_id(b"\x01" * 31, pk)
+    with pytest.raises(RoutingTokenError):
+        machine_id(INSTALLATION, b"\x01" * 31)
+
+
+def test_tokens_name_their_issuer_key_and_verification_checks_it() -> None:
+    import base64
+    import json
+
+    issuer = _issuer(clock=lambda: 1_000_000)
+    token = issuer.mint(role=ROLE_HOST, installation_id=INSTALLATION, ttl_seconds=600)
+    claims_b64 = token.split(".")[1]
+    claims = json.loads(base64.urlsafe_b64decode(claims_b64 + "=" * (-len(claims_b64) % 4)))
+    assert claims["pk"] == issuer.public_key_b64url
+    assert len(claims["pk"]) == 43
+    verify_routing_token(token, public_key=issuer.public_key, now=1_000_000)
+
+    # A token whose pk names a different key than the verifier's is rejected
+    # (the Worker would verify with the named key and fail the signature).
+    other = RoutingTokenIssuer(b"\x09" * 32, clock=lambda: 1_000_000)
+    forged = other.mint(role=ROLE_HOST, installation_id=INSTALLATION, ttl_seconds=600)
+    with pytest.raises(RoutingTokenError):
+        verify_routing_token(forged, public_key=issuer.public_key, now=1_000_000)

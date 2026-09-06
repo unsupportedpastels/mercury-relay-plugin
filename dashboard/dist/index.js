@@ -445,6 +445,32 @@
           )
         : null,
 
+      // -- relay access -----------------------------------------------------
+      // The machine ID is a hash over this installation's relay route and its
+      // routing issuer public key. It is not a secret and admits only this
+      // installation; the relay operator allowlists it in the operations
+      // console before the hosted relay accepts this gateway.
+      diag && diag.relay_machine_id
+        ? h(
+            "div",
+            { className: "mr-card" },
+            h("h2", null, "Relay access"),
+            h("div", { className: "mr-muted" },
+              "Send this machine ID to the relay operator to allow this gateway " +
+                "to connect to the hosted relay."),
+            h("div", { className: "mr-row mr-spread", style: { marginTop: "10px" } },
+              h("div", { className: "mr-fingerprint" }, diag.relay_machine_id),
+              h("button", {
+                className: "mr-btn mr-ghost",
+                onClick: function () {
+                  if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(diag.relay_machine_id).catch(function () {});
+                  }
+                },
+              }, "Copy")),
+          )
+        : null,
+
       // -- updates (last) ---------------------------------------------------
       h(UpdatesCard, { update: update, busy: updateBusy, result: updateResult,
         onCheck: checkUpdates, onApply: applyUpdate }),

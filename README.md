@@ -123,6 +123,17 @@ Restart Hermes. The dashboard gains a **Mercury Relay** tab where you create a
 one-time pairing QR, compare the fingerprint the phone shows, and approve or
 revoke devices.
 
+### Getting the hosted relay to accept this host
+
+The hosted relay only routes for installations the relay operator has
+allowlisted. The tab's **Relay access** card shows this installation's
+**Relay machine ID** (`MR-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX`). Send it to the
+operator. It is a hash over this installation's relay route and its routing
+issuer public key: not a secret, useless for any other installation, and it
+changes only if the plugin's private state is wiped (in which case send the
+new one). Once it is allowlisted, the outbound relay connection is admitted
+within about a minute.
+
 ### Hermes Desktop
 
 The same repository carries a Hermes Desktop plugin in `desktop/plugin.js`.

@@ -48,7 +48,7 @@ function h(type, props) {
 const API_BASE = '/api/plugins/mercury-relay'
 // Version of THIS desktop half. Kept in step with the plugin manifest by a
 // test; the gateway's plugin reports its own version over /update.
-const DESKTOP_PLUGIN_VERSION = '0.2.6'
+const DESKTOP_PLUGIN_VERSION = '0.2.7'
 // The public repo both halves install from; the desktop bridge re-clones it.
 const PLUGIN_REPO = 'unsupportedpastels/mercury-relay-plugin'
 
@@ -435,6 +435,30 @@ function ActiveRelayPanel(props) {
       ? h('div', { className: 'mr-banner' },
           'No relay origin configured on this gateway — pairing works, but the phone ' +
             'cannot connect until the hosted relay origin is set.')
+      : null,
+
+    // relay access: the machine ID is a hash over this gateway's relay route
+    // and its routing issuer public key. Not a secret; it admits only this
+    // gateway once the relay operator allowlists it in the operations console.
+    s && s.relay_machine_id
+      ? h('div', { className: 'mr-card' },
+          h('div', { className: 'mr-row mr-spread' },
+            h('div', null,
+              h('h2', null, 'Relay access'),
+              h('div', { className: 'mr-muted' },
+                'Send this machine ID to the relay operator to allow this gateway to ' +
+                  'connect to the hosted relay.'),
+              h('div', { className: 'mr-fingerprint', style: { marginTop: '8px' } },
+                s.relay_machine_id)),
+            h(Button, {
+              variant: 'ghost',
+              size: 'sm',
+              onClick: () => {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                  navigator.clipboard.writeText(s.relay_machine_id).catch(() => {})
+                }
+              },
+            }, 'Copy')))
       : null,
 
     // pairing

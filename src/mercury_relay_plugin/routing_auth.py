@@ -18,13 +18,23 @@ Ed25519 signature over the ASCII bytes of ``header.claims``.
 Header (exact): ``{"alg":"EdDSA","typ":"mrt1"}``.
 Claims: ``aud`` (fixed), ``role`` (``host`` | ``pairing_device`` |
 ``authorized_device``), ``inst`` (the 43-character installation route),
-``iat``/``exp`` (seconds), ``jti`` (random 16 bytes, URL-safe base64).
+``iat``/``exp`` (seconds), ``jti`` (random 16 bytes, URL-safe base64),
+``pk`` (this issuer's 32-byte public key, URL-safe base64).
+
+Machine ID (interim allowlist entitlement): the Worker admits a token whose
+``pk`` is not its static issuer key only when the *machine ID* derived from
+the installation route and ``pk`` is on the owner-managed allowlist. The ID
+is ``MR-`` plus 24 base32 characters (grouped in fours) of the first 15
+bytes of ``SHA-256(domain || route || pk)`` over the ASCII base64 forms, so
+an allowlisted key admits exactly one installation. The owner copies it from
+the plugin UI and pastes it into the relay operations console.
 """
 
 from __future__ import annotations
 
 import base64
 import copy
+import hashlib
 import json
 import time
 from collections.abc import Callable
@@ -64,6 +74,9 @@ MAX_TOKEN_CHARS = 1024
 MAX_JTI_CHARS = 64
 JTI_BYTES = 16
 ISSUER_FIELD = "routing_issuer"
+MACHINE_ID_DOMAIN = "mercury-relay-machine-id/v1"
+MACHINE_ID_BYTES = 15
+PUBLIC_KEY_B64URL_CHARS = 43
 _HEADER_JSON = '{"alg":"EdDSA","typ":"mrt1"}'
 _HEADER_B64 = _b64url_encode(_HEADER_JSON.encode("ascii"))
 # Per-role maximum token lifetimes, in exact parity with the Worker edge's
@@ -74,6 +87,20 @@ MAX_TOKEN_LIFETIME_SECONDS = {
     ROLE_PAIRING_DEVICE: 900,
     ROLE_AUTHORIZED_DEVICE: 45 * 24 * 3_600,
 }
+
+
+def machine_id(installation_id: bytes, public_key: bytes) -> str:
+    """Derive the owner-facing machine ID, in exact parity with the Worker."""
+
+    if not isinstance(installation_id, bytes) or len(installation_id) != 32:
+        raise RoutingTokenError("invalid_installation_id")
+    if not isinstance(public_key, bytes) or len(public_key) != 32:
+        raise RoutingTokenError("invalid_issuer_key")
+    route = _b64url_encode(installation_id)
+    pk = _b64url_encode(public_key)
+    digest = hashlib.sha256(f"{MACHINE_ID_DOMAIN}{route}{pk}".encode("ascii")).digest()
+    raw = base64.b32encode(digest[:MACHINE_ID_BYTES]).decode("ascii").rstrip("=")
+    return "MR-" + "-".join(raw[i : i + 4] for i in range(0, len(raw), 4))
 
 
 class RoutingTokenError(RuntimeError):
@@ -114,6 +141,11 @@ class RoutingTokenIssuer:
 
         return _b64url_encode(self._public)
 
+    def machine_id(self, installation_id: bytes) -> str:
+        """The allowlist ID the owner gives the relay operator for this install."""
+
+        return machine_id(installation_id, self._public)
+
     def mint(self, *, role: str, installation_id: bytes, ttl_seconds: int) -> str:
         if role not in ROLES:
             raise RoutingTokenError("invalid_role")
@@ -129,6 +161,9 @@ class RoutingTokenIssuer:
             "iat": now,
             "exp": now + ttl_seconds,
             "jti": _b64url_encode(_new_random_bytes(JTI_BYTES)),
+            # Names the verifying key so the Worker can admit allowlisted
+            # machines without a per-installation static binding.
+            "pk": self.public_key_b64url,
         }
         header_b64 = _b64url_encode(_HEADER_JSON.encode("ascii"))
         claims_b64 = _b64url_encode(
@@ -224,6 +259,14 @@ def verify_routing_token(
         raise RoutingTokenError("invalid_claims")
     if installation is not None and claims["inst"] != installation:
         raise RoutingTokenError("invalid_claims")
+    if "pk" in claims:
+        pk = claims["pk"]
+        if not isinstance(pk, str) or len(pk) != PUBLIC_KEY_B64URL_CHARS:
+            raise RoutingTokenError("invalid_claims")
+        # The Worker verifies with the named key; a token naming a key other
+        # than the one it was signed with fails there as a bad signature.
+        if _b64url_decode_loose(pk) != public_key:
+            raise RoutingTokenError("invalid_signature")
     lifetime = claims["exp"] - claims["iat"]
     if lifetime < 1 or lifetime > MAX_TOKEN_LIFETIME_SECONDS[role]:
         raise RoutingTokenError("invalid_claims")
@@ -282,6 +325,7 @@ __all__ = [
     "AUTHORIZED_DEVICE_TOKEN_TTL_SECONDS",
     "HOST_TOKEN_TTL_SECONDS",
     "ISSUER_FIELD",
+    "MACHINE_ID_DOMAIN",
     "ROLE_AUTHORIZED_DEVICE",
     "ROLE_HOST",
     "ROLE_PAIRING_DEVICE",
@@ -290,5 +334,6 @@ __all__ = [
     "RoutingTokenError",
     "RoutingTokenIssuer",
     "TOKEN_AUDIENCE",
+    "machine_id",
     "verify_routing_token",
 ]

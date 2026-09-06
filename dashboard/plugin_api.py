@@ -193,6 +193,10 @@ async def status() -> dict[str, Any]:
     snapshot = _runtime.snapshot()
     snapshot["relay_origin_configured"] = _relay_origin_configured()
     snapshot["relay_connected"] = bool(_connector is not None and _connector.connected)
+    # The machine ID the owner gives the relay operator to be allowlisted.
+    snapshot["relay_machine_id"] = (
+        _management.relay_machine_id() if _management is not None else None
+    )
     return snapshot
 
 
