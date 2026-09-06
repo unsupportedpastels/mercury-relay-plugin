@@ -148,3 +148,35 @@ def test_qr_default_size_is_at_least_320px() -> None:
     assert ".mr-qr svg{width:320px;height:320px" in desktop
     assert "width: 320px;" in dashboard_css
     assert ".mr-qr svg{width:200px" not in desktop  # the old cramped size is gone
+
+
+def test_roster_light_distinguishes_the_three_404_states() -> None:
+    """Hermes answers a plugin route with two different 404 bodies. The gate
+    says "Plugin not found" when the name is not in plugins.enabled; plain
+    FastAPI says "Not Found" when it is enabled but the router was never
+    mounted (process predates the install). The roster must not collapse
+    these into one "not installed" light, and the restart guidance must
+    name Hermes Desktop for the local child process."""
+    src = _source()
+    assert "function classify404" in src
+    assert "plugin not found" in src.lower()
+    assert '"Not Found"' in src
+    assert "relay installed but not enabled here" in src
+    assert "relay installed, restart needed" in src
+    assert "relay not installed here" in src
+    assert "MissingBackendCard" in src
+    assert "quit and reopen Hermes Desktop" in src
+    assert "hermes plugins enable mercury-relay" in src
+
+
+DOCS = Path(__file__).parents[1]
+
+
+@pytest.mark.parametrize("name", ["README.md", "docs/install.html"])
+def test_install_docs_name_the_right_restart_and_git(name: str) -> None:
+    text = (DOCS / name).read_text(encoding="utf-8")
+    # "This device" is Hermes Desktop's own `hermes serve` child; the docs
+    # must not send local users to `hermes gateway restart` alone.
+    assert "quit and reopen hermes desktop" in text.lower()
+    assert "hermes gateway restart" in text
+    assert "git" in text and "PATH" in text
