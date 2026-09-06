@@ -48,7 +48,9 @@ function h(type, props) {
 const API_BASE = '/api/plugins/mercury-relay'
 // Version of THIS desktop half. Kept in step with the plugin manifest by a
 // test; the gateway's plugin reports its own version over /update.
-const DESKTOP_PLUGIN_VERSION = '0.2.1'
+const DESKTOP_PLUGIN_VERSION = '0.2.2'
+// The public repo both halves install from; the desktop bridge re-clones it.
+const PLUGIN_REPO = 'unsupportedpastels/mercury-relay-plugin'
 
 function versionTuple(text) {
   const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(String(text || '').trim())
@@ -275,6 +277,35 @@ function ActiveRelayPanel(props) {
       .finally(() => setUpdateBusy(false))
   }, [props, updateQ])
 
+  // Desktop half: Hermes Desktop's own installer re-clones the repo and
+  // replaces this plugin's folder; the runtime loader hot-reloads plugin.js.
+  const [desktopBusy, setDesktopBusy] = useState(false)
+  const [desktopResult, setDesktopResult] = useState(null)
+  const updateDesktop = useCallback(async () => {
+    const bridge = typeof window !== 'undefined' ? window.hermesDesktop : undefined
+    const installFn = bridge && bridge.installDesktopPlugin
+    if (!installFn) {
+      setDesktopResult({ ok: false, error: 'This Hermes Desktop build cannot reinstall plugins from a page. Use Settings ▸ Plugins.' })
+      return
+    }
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm('Update the Mercury Relay desktop plugin on this computer now? Hermes Desktop will re-download it and reload it in place.')
+    ) {
+      return
+    }
+    setDesktopBusy(true)
+    setDesktopResult(null)
+    try {
+      const r = await installFn({ identifier: PLUGIN_REPO, force: true })
+      setDesktopResult(r && r.ok ? { ok: true } : { ok: false, error: (r && r.error) || 'failed' })
+    } catch (e) {
+      setDesktopResult({ ok: false, error: e && e.message ? e.message : 'failed' })
+    } finally {
+      setDesktopBusy(false)
+    }
+  }, [])
+
   const applyUpdate = useCallback(() => {
     if (
       typeof window !== 'undefined' &&
@@ -437,6 +468,9 @@ function ActiveRelayPanel(props) {
       result: updateResult,
       onCheck: checkUpdates,
       onApply: applyUpdate,
+      desktopBusy: desktopBusy,
+      desktopResult: desktopResult,
+      onUpdateDesktop: updateDesktop,
     }),
 
     // devices
@@ -478,6 +512,10 @@ function UpdatesCard(props) {
         u.available
           ? h(Button, { size: 'sm', onClick: props.onApply, disabled: props.busy || !canApply },
               props.busy ? 'Updating…' : 'Update gateway plugin')
+          : null,
+        desktopBehind
+          ? h(Button, { size: 'sm', onClick: props.onUpdateDesktop, disabled: props.desktopBusy },
+              props.desktopBusy ? 'Updating…' : 'Update desktop plugin')
           : null)),
     u.available
       ? h('div', { className: 'mr-banner' },
@@ -489,7 +527,13 @@ function UpdatesCard(props) {
       ? h('div', { className: 'mr-banner' },
           h('span', { className: 'mr-update-dot' }),
           'This desktop plugin is ' + DESKTOP_PLUGIN_VERSION + '; ' + u.latest +
-            ' is available. Update it from Settings ▸ Plugins on this computer.')
+            ' is available. Update desktop plugin re-downloads it on this computer and reloads it in place.')
+      : null,
+    props.desktopResult
+      ? h('div', { className: props.desktopResult.ok ? 'mr-banner' : 'mr-banner mr-error' },
+          props.desktopResult.ok
+            ? 'Desktop plugin updated; it reloads automatically.'
+            : 'Desktop plugin update failed: ' + props.desktopResult.error)
       : null,
     props.result
       ? h('div', { className: props.result.ok ? 'mr-banner' : 'mr-banner mr-error' },

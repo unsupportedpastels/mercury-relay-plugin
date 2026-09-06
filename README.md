@@ -165,8 +165,9 @@ plugin's public config to turn the timer off; "Check now" still works.
 `hermes plugins update mercury-relay`, so Hermes' install validation and
 supply-chain scan apply, and it only works for git checkouts that are not
 pinned. Restart the gateway afterwards to load the new version. From Hermes
-Desktop pointed at a remote gateway, the button updates that gateway's plugin;
-the desktop half updates from Settings ▸ Plugins on the computer running it.
+Desktop the card shows both halves: "Update gateway plugin" updates the active
+gateway's plugin (local or remote), and "Update desktop plugin" asks Hermes
+Desktop to re-download this plugin and reload it in place on that computer.
 
 ## Layout
 
