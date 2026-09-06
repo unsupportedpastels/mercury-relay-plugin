@@ -38,3 +38,8 @@ def contract_import(module_name: str):
                 pytrace=False,
             )
     return pytest.importorskip(module_name)
+
+
+posix_only = pytest.mark.skipif(
+    os.name != "posix", reason="POSIX mode bits are not enforced on this platform"
+)

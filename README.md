@@ -81,22 +81,34 @@ source tree.
 
 ## Install
 
-Requirements: a **macOS or Linux** host running Hermes Agent with the web
-dashboard, Python 3.11 to 3.13. The `cryptography` package ships with Hermes.
-The Noise implementation and the QR generator are vendored under
+Requirements: a macOS, Linux, or Windows host running Hermes Agent with the
+web dashboard, Python 3.11 to 3.13. The `cryptography` package ships with
+Hermes. The Noise implementation and the QR generator are vendored under
 `src/mercury_relay_plugin/_vendor/` so there is no pip step on the host.
 
-Windows hosts are not supported yet: the plugin relies on POSIX file locking
-and descriptor-relative, no-follow file opens to keep its key material and
-state store safe, and those APIs do not exist on Windows. The Hermes Desktop
-plugin in `desktop/plugin.js` does run on Windows when Hermes Desktop is
-connected to a macOS or Linux host.
+On POSIX hosts the plugin keeps its keys and state in `0600` files inside a
+`0700` directory and opens them relative to a pinned directory descriptor with
+`O_NOFOLLOW`. On Windows those primitives do not exist, so the plugin
+re-validates every path component before each open, refuses reparse points
+(symlinks and junctions), and relies on the per-user ACL of the Hermes home
+under `%LOCALAPPDATA%` for ownership isolation. The encrypted image-read
+extension is advertised on POSIX hosts only. See
+`src/mercury_relay_plugin/secure_fs.py` for the exact split.
 
 Clone the repository into the `plugins/mercury-relay` folder under your Hermes
-home. The default home is `~/.hermes`, or whatever `HERMES_HOME` points at:
+home. The default home is `~/.hermes` on macOS and Linux and
+`%LOCALAPPDATA%\hermes` on Windows, or whatever `HERMES_HOME` points at.
+
+macOS and Linux:
 
 ```bash
 git clone https://github.com/unsupportedpastels/mercury-relay-plugin "${HERMES_HOME:-$HOME/.hermes}/plugins/mercury-relay"
+```
+
+Windows (PowerShell):
+
+```powershell
+git clone https://github.com/unsupportedpastels/mercury-relay-plugin "$(if ($env:HERMES_HOME) { $env:HERMES_HOME } else { "$env:LOCALAPPDATA\hermes" })\plugins\mercury-relay"
 ```
 
 Then enable it in your Hermes `config.yaml`:
@@ -109,7 +121,24 @@ plugins:
 
 Restart Hermes. The dashboard gains a **Mercury Relay** tab where you create a
 one-time pairing QR, compare the fingerprint the phone shows, and approve or
-revoke devices. A matching Hermes Desktop plugin lives in `desktop/plugin.js`.
+revoke devices.
+
+### Hermes Desktop
+
+The same repository carries a Hermes Desktop plugin in `desktop/plugin.js`.
+Hermes Desktop only loads plugins from the machine it runs on, so:
+
+- If Hermes Desktop runs on the host you just installed on, it finds the
+  desktop half automatically at `plugins/mercury-relay/desktop/plugin.js`.
+  Turn it on under **Settings > Plugins**; it ships off by default.
+- If Hermes Desktop runs on another machine (a Windows laptop talking to a
+  Linux host, for example), install the repository there too through
+  **Settings > Plugins > Install** with the repository URL. The installer
+  detects both halves and sets up the desktop one; the server half is inert
+  on a machine that is not running Hermes.
+
+The desktop tab talks to whichever gateway is active in Hermes Desktop and
+shows a per-connection light for whether relay is installed and reachable.
 
 ## Wire contract extensions
 

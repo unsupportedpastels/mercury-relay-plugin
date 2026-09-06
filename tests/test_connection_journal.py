@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import pytest
+from conftest import posix_only
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
@@ -16,6 +17,7 @@ from mercury_relay_plugin.connection_journal import (
 )
 
 
+@posix_only
 def test_journal_is_bounded_private_rotating_and_sanitized(tmp_path: Path) -> None:
     paths = profile_paths(explicit_path=tmp_path)
     journal = ConnectionJournal(paths, max_bytes=2_200, memory_limit=3)

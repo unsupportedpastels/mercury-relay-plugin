@@ -8,6 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from conftest import posix_only
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
@@ -41,6 +42,7 @@ def test_missing_state_has_secure_v1_default(tmp_path):
     assert store.load() == {"schema_version": 1, "devices": []}
 
 
+@posix_only
 def test_round_trip_json_object_and_private_mode(tmp_path):
     store = make_store(tmp_path)
     value = valid_state(last_seen=123)

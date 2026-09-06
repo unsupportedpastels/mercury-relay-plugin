@@ -24,6 +24,7 @@ from pathlib import Path
 from queue import Empty, Full, Queue
 from typing import Any
 
+from . import secure_fs
 from .config import ProfilePaths, _secure_directory
 from .state_store import _read_bounded
 
@@ -459,15 +460,12 @@ class ConnectionJournal:
                 current_size = 0
             if current_size + len(line) > self.max_bytes:
                 return
-            flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND | getattr(os, "O_CLOEXEC", 0)
-            flags |= getattr(os, "O_NOFOLLOW", 0)
-            fd = os.open(self.path, flags, 0o600)
+            fd = secure_fs.open_append_nofollow(self.path, 0o600)
             try:
                 info = os.fstat(fd)
                 if not stat.S_ISREG(info.st_mode):
                     return
-                if os.name == "posix":
-                    os.fchmod(fd, 0o600)
+                secure_fs.fchmod_private(fd, 0o600)
                 if info.st_size + len(line) > self.max_bytes:
                     return
                 written = os.write(fd, line)

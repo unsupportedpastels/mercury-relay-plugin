@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from conftest import posix_only
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
@@ -32,6 +33,7 @@ def device_key(seed: int) -> bytes:
     return bytes([seed]) * 32
 
 
+@posix_only
 def test_offer_is_single_active_bounded_and_secret_safe(tmp_path: Path) -> None:
     paths = make_paths(tmp_path)
     repo = AuthorizationRepository(paths, clock=lambda: 1000)

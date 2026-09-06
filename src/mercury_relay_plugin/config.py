@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from . import secure_fs
+
 STATE_DIR_NAME = "mercury-relay"
 CONFIG_FILE_NAME = "config.json"
 STATE_FILE_NAME = "state.json"
@@ -121,39 +123,23 @@ def _check_path_components(path: Path) -> None:
             continue
         except OSError:
             raise ProfileConfigError("unsafe profile path") from None
-        if stat.S_ISLNK(info.st_mode):
+        if secure_fs.is_link_like(info):
             raise ProfileConfigError("symlinks are not allowed in profile paths")
         if index < len(parts) - 1 and not stat.S_ISDIR(info.st_mode):
             raise ProfileConfigError("profile path component is not a directory")
 
 
-def _open_directory_nofollow(path: Path) -> int:
-    """Open a directory component-by-component without following symlinks."""
+def _open_directory_nofollow(path: Path) -> secure_fs.DirectoryHandle:
+    """Open a directory component-by-component without following symlinks.
+
+    Returns a :class:`secure_fs.DirectoryHandle`: a descriptor on POSIX, a
+    re-validated path on Windows.  Callers must close it.
+    """
 
     candidate = _absolute_path(path)
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
     try:
-        fd = os.open(candidate.anchor or os.path.sep, flags | nofollow)
+        return secure_fs.open_directory_nofollow(candidate)
     except OSError:
-        raise ProfileConfigError("unsafe profile directory") from None
-    try:
-        parts = candidate.parts[1:] if candidate.anchor else candidate.parts
-        for part in parts:
-            next_fd = os.open(part, flags | nofollow, dir_fd=fd)
-            if not stat.S_ISDIR(os.fstat(next_fd).st_mode):
-                os.close(next_fd)
-                raise ProfileConfigError("unsafe profile directory")
-            os.close(fd)
-            fd = next_fd
-        return fd
-    except ProfileConfigError:
-        with suppress(OSError):
-            os.close(fd)
-        raise
-    except OSError:
-        with suppress(OSError):
-            os.close(fd)
         raise ProfileConfigError("unsafe profile directory") from None
 
 
@@ -166,38 +152,34 @@ def _secure_directory(path: Path) -> None:
     """
 
     candidate = _absolute_path(path)
-    parent_fd = _open_directory_nofollow(candidate.parent)
-    child_fd: int | None = None
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_DIRECTORY", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
+    parent = _open_directory_nofollow(candidate.parent)
+    child: secure_fs.DirectoryHandle | None = None
     try:
         try:
-            child_fd = os.open(candidate.name, flags, dir_fd=parent_fd)
+            child = parent.open_directory(candidate.name)
         except FileNotFoundError:
             with suppress(FileExistsError):
-                os.mkdir(candidate.name, 0o700, dir_fd=parent_fd)
-            child_fd = os.open(candidate.name, flags, dir_fd=parent_fd)
-        if not stat.S_ISDIR(os.fstat(child_fd).st_mode):
-            raise ProfileConfigError("unsafe profile directory")
-        if os.name == "posix":
-            os.fchmod(child_fd, 0o700)
+                parent.mkdir(candidate.name, 0o700)
+            child = parent.open_directory(candidate.name)
+        child.chmod(0o700)
     except ProfileConfigError:
         raise
     except OSError:
         raise ProfileConfigError("cannot secure profile directory") from None
     finally:
-        if child_fd is not None:
+        if child is not None:
             with suppress(OSError):
-                os.close(child_fd)
+                child.close()
         with suppress(OSError):
-            os.close(parent_fd)
+            parent.close()
 
 
 def resolve_data_root(explicit_path: str | os.PathLike[str] | None = None) -> Path:
     """Return the active Hermes profile home.
 
     Resolution is intentionally limited to an explicit path, ``HERMES_HOME``,
-    or Hermes' platform-native fallback (``Path.home() / ".hermes"`` on POSIX).
+    or Hermes' platform-native fallback (``~/.hermes`` on POSIX,
+    ``%LOCALAPPDATA%\\hermes`` on Windows).
     In particular, this function does not inspect the project directory or
     invent a ``/home/...`` path.
     """
@@ -207,7 +189,7 @@ def resolve_data_root(explicit_path: str | os.PathLike[str] | None = None) -> Pa
     configured = os.environ.get("HERMES_HOME", "").strip()
     if configured:
         return _absolute_path(configured)
-    return _absolute_path(Path.home() / ".hermes")
+    return _absolute_path(secure_fs.default_hermes_home())
 
 
 @dataclass(frozen=True)

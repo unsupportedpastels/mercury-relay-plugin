@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
+from conftest import posix_only
 
 from mercury_relay_plugin.admission import DeviceAdmissionService
 from mercury_relay_plugin.authorization import AuthorizationRepository
@@ -12,6 +13,7 @@ from mercury_relay_plugin.operational_metrics import OperationalMetrics, Operati
 from mercury_relay_plugin.runtime import RelayRuntime
 
 
+@posix_only
 def test_metrics_persist_only_fixed_aggregate_counters(tmp_path: Path) -> None:
     metrics = OperationalMetrics(profile_paths(explicit_path=tmp_path), clock=lambda: 1_000)
     assert metrics.path.parent.name == "operations"

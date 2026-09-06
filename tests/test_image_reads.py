@@ -3,11 +3,16 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 
 import pytest
 from conftest import contract_import
 
 from mercury_relay_plugin.session_reads import SessionReads, SessionReadsError
+
+pytestmark = pytest.mark.skipif(
+    os.name != "posix", reason="image reads require POSIX descriptor-relative opens"
+)
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"synthetic image fixture"
 

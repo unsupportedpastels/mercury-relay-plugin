@@ -1,6 +1,7 @@
 import asyncio
 import json
 
+from conftest import posix_only
 from test_session_lease import Controllers
 
 from mercury_relay_plugin.lease_recovery import RecoveryProjection, RecoveryStore
@@ -33,6 +34,7 @@ def event(child="child", status="completed", runtime="runtime", **fields):
     )
 
 
+@posix_only
 def test_store_recreated_scope_expiry_truncation_and_sticky_terminal(tmp_path):
     now = [100]
     path = tmp_path / "private" / "recovery.json"

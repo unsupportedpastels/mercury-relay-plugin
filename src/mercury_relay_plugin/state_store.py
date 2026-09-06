@@ -19,6 +19,7 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
+from . import secure_fs
 from .config import (
     STATE_DIR_NAME,
     STATE_FILE_NAME,
@@ -55,7 +56,7 @@ class StateStoreError(ProfileConfigError):
 
 
 def _is_private_file_mode(mode: int) -> bool:
-    return stat.S_IMODE(mode) == 0o600
+    return secure_fs.private_mode_ok(mode)
 
 
 def _validate_json_values(value: Any, *, depth: int = 0) -> None:
@@ -156,21 +157,20 @@ def _read_bounded(path: Path, max_bytes: int) -> bytes:
     except OSError:
         raise StateStoreError("cannot inspect state file") from None
     try:
-        parent_fd = _open_directory_nofollow(path.parent)
+        parent = _open_directory_nofollow(path.parent)
     except ProfileConfigError:
         raise StateStoreError("cannot inspect state file") from None
     fd: int | None = None
     try:
-        info = os.stat(path.name, dir_fd=parent_fd, follow_symlinks=False)
-        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        info = parent.lstat(path.name)
+        if secure_fs.is_link_like(info) or not stat.S_ISREG(info.st_mode):
             raise StateStoreError("state file is not a regular file")
         if not _is_private_file_mode(info.st_mode):
             raise StateStoreError("state file permissions are too broad")
         if info.st_size > max_bytes:
             raise StateStoreError("state exceeds size limit")
 
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        fd = os.open(path.name, flags, dir_fd=parent_fd)
+        fd = parent.open(path.name, os.O_RDONLY)
         opened = os.fstat(fd)
         if not stat.S_ISREG(opened.st_mode) or not _is_private_file_mode(opened.st_mode):
             raise StateStoreError("state file is not secure")
@@ -191,12 +191,12 @@ def _read_bounded(path: Path, max_bytes: int) -> bytes:
             with suppress(OSError):
                 os.close(fd)
         with suppress(OSError):
-            os.close(parent_fd)
+            parent.close()
 
 
-def _fsync_directory(fd: int) -> None:
+def _fsync_directory(directory: secure_fs.DirectoryHandle) -> None:
     try:
-        os.fsync(fd)
+        directory.fsync()
     except OSError:
         raise StateStoreError("cannot sync state directory") from None
 
@@ -208,34 +208,32 @@ def _atomic_write(path: Path, data: bytes) -> None:
     _secure_directory(parent)
     _check_path_components(path)
     try:
-        parent_fd = _open_directory_nofollow(parent)
+        directory = _open_directory_nofollow(parent)
     except ProfileConfigError:
         raise StateStoreError("state write failed") from None
     temp_name: str | None = None
     fd: int | None = None
     try:
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0)
-        flags |= getattr(os, "O_NOFOLLOW", 0)
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         for _ in range(8):
             candidate = f".{path.name}.{secrets.token_hex(8)}.tmp"
             try:
-                fd = os.open(candidate, flags, 0o600, dir_fd=parent_fd)
+                fd = directory.open(candidate, flags, 0o600)
                 temp_name = candidate
                 break
             except FileExistsError:
                 continue
         if fd is None or temp_name is None:
             raise StateStoreError("state write failed")
-        if os.name == "posix":
-            os.fchmod(fd, 0o600)
+        secure_fs.fchmod_private(fd, 0o600)
         with os.fdopen(fd, "wb") as stream:
             fd = None
             stream.write(data)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temp_name, path.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+        directory.replace(temp_name, path.name)
         temp_name = None
-        _fsync_directory(parent_fd)
+        _fsync_directory(directory)
     except StateStoreError:
         raise
     except (OSError, ValueError):
@@ -246,9 +244,9 @@ def _atomic_write(path: Path, data: bytes) -> None:
                 os.close(fd)
         if temp_name is not None:
             with suppress(OSError):
-                os.unlink(temp_name, dir_fd=parent_fd)
+                directory.unlink(temp_name)
         with suppress(OSError):
-            os.close(parent_fd)
+            directory.close()
 
 
 class StateStore:

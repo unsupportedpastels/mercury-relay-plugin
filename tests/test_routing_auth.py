@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from conftest import posix_only
 
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
@@ -75,6 +76,7 @@ def test_minting_validates_inputs() -> None:
         RoutingTokenIssuer(b"short")
 
 
+@posix_only
 def test_issuer_store_persists_one_key_and_never_leaks_it(tmp_path: Path) -> None:
     root = tmp_path / "hermes"
     root.mkdir()

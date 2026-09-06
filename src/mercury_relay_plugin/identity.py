@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 import binascii
 import copy
-import fcntl
 import hmac
 import os
 import secrets
@@ -24,6 +23,7 @@ from typing import Any
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import x25519
 
+from . import secure_fs
 from .config import ProfileConfigError, ProfilePaths, _open_directory_nofollow, profile_paths
 from .state_store import StateStore, StateStoreError
 
@@ -111,30 +111,25 @@ def _store_for(
     return paths, StateStore(paths)
 
 
-def _open_lock(directory_fd: int, name: str) -> int:
-    """Open only a regular 0600 lock target, without following symlinks."""
+def _open_lock(directory: secure_fs.DirectoryHandle, name: str) -> int:
+    """Open only a regular owner-private lock target, without following symlinks."""
 
-    flags_common = os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
     for _ in range(2):
         try:
-            info = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+            info = directory.lstat(name)
         except FileNotFoundError:
             try:
-                fd = os.open(
-                    name,
-                    flags_common | os.O_CREAT | os.O_EXCL | nofollow,
-                    0o600,
-                    dir_fd=directory_fd,
-                )
+                fd = directory.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o600)
             except FileExistsError:
                 continue
             except OSError:
                 raise IdentityError("transaction unavailable") from None
             try:
-                os.fchmod(fd, 0o600)
+                secure_fs.fchmod_private(fd, 0o600)
                 checked = os.fstat(fd)
-                if not stat.S_ISREG(checked.st_mode) or stat.S_IMODE(checked.st_mode) != 0o600:
+                if not stat.S_ISREG(checked.st_mode) or not secure_fs.private_mode_ok(
+                    checked.st_mode
+                ):
                     raise IdentityError("transaction unavailable")
                 return fd
             except IdentityError:
@@ -148,14 +143,14 @@ def _open_lock(directory_fd: int, name: str) -> int:
         except OSError:
             raise IdentityError("transaction unavailable") from None
 
-        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        if secure_fs.is_link_like(info) or not stat.S_ISREG(info.st_mode):
             raise IdentityError("transaction unavailable")
-        if stat.S_IMODE(info.st_mode) != 0o600:
+        if not secure_fs.private_mode_ok(info.st_mode):
             raise IdentityError("transaction unavailable")
         try:
-            fd = os.open(name, flags_common | nofollow, dir_fd=directory_fd)
+            fd = directory.open(name, os.O_RDWR)
             checked = os.fstat(fd)
-            if not stat.S_ISREG(checked.st_mode) or stat.S_IMODE(checked.st_mode) != 0o600:
+            if not stat.S_ISREG(checked.st_mode) or not secure_fs.private_mode_ok(checked.st_mode):
                 raise IdentityError("transaction unavailable")
             return fd
         except IdentityError:
@@ -169,15 +164,15 @@ def _open_lock(directory_fd: int, name: str) -> int:
 
 @contextmanager
 def _transaction_lock(paths: ProfilePaths) -> Iterator[None]:
-    """Serialize state transactions with a bounded POSIX advisory lock."""
+    """Serialize state transactions with a bounded advisory lock."""
 
     try:
         paths.ensure()
-        directory_fd = _open_directory_nofollow(paths.agent_dir)
+        directory = _open_directory_nofollow(paths.agent_dir)
         try:
-            fd = _open_lock(directory_fd, LOCK_FILE_NAME)
+            fd = _open_lock(directory, LOCK_FILE_NAME)
         finally:
-            os.close(directory_fd)
+            directory.close()
     except IdentityError:
         raise
     except Exception:
@@ -188,7 +183,7 @@ def _transaction_lock(paths: ProfilePaths) -> Iterator[None]:
     try:
         while True:
             try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                secure_fs.try_lock_exclusive(fd)
                 acquired = True
                 break
             except (BlockingIOError, OSError) as error:
@@ -208,7 +203,7 @@ def _transaction_lock(paths: ProfilePaths) -> Iterator[None]:
     finally:
         if acquired:
             with suppress(OSError):
-                fcntl.flock(fd, fcntl.LOCK_UN)
+                secure_fs.unlock(fd)
         with suppress(OSError):
             os.close(fd)
 

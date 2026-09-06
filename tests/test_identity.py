@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
+from conftest import posix_only
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import x25519
 
@@ -30,6 +31,7 @@ def make_paths(tmp_path: Path):
     return profile_paths("default", explicit_path=root)
 
 
+@posix_only
 def test_identity_is_raw_x25519_and_repr_redacts_private_material(tmp_path: Path) -> None:
     paths = make_paths(tmp_path)
     identity = HostIdentityStore(paths).load_or_create()
@@ -89,6 +91,7 @@ def test_persisted_identity_must_have_matching_lengths_and_public_key(tmp_path: 
         HostIdentityStore(paths).load_or_create()
 
 
+@posix_only
 def test_lock_target_symlink_is_rejected_without_parent_permission_mutation(tmp_path: Path) -> None:
     paths = make_paths(tmp_path)
     os.chmod(paths.data_root, 0o755)
