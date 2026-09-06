@@ -81,13 +81,22 @@ source tree.
 
 ## Install
 
-Requirements: Hermes Agent with the web dashboard, Python 3.11 to 3.13. The
-`cryptography` package ships with Hermes. The Noise implementation and the QR
-generator are vendored under `src/mercury_relay_plugin/_vendor/` so there is no
-pip step on the host.
+Requirements: a **macOS or Linux** host running Hermes Agent with the web
+dashboard, Python 3.11 to 3.13. The `cryptography` package ships with Hermes.
+The Noise implementation and the QR generator are vendored under
+`src/mercury_relay_plugin/_vendor/` so there is no pip step on the host.
+
+Windows hosts are not supported yet: the plugin relies on POSIX file locking
+and descriptor-relative, no-follow file opens to keep its key material and
+state store safe, and those APIs do not exist on Windows. The Hermes Desktop
+plugin in `desktop/plugin.js` does run on Windows when Hermes Desktop is
+connected to a macOS or Linux host.
+
+Clone the repository into the `plugins/mercury-relay` folder under your Hermes
+home. The default home is `~/.hermes`, or whatever `HERMES_HOME` points at:
 
 ```bash
-git clone https://github.com/unsupportedpastels/mercury-relay-plugin "$HOME/.hermes/plugins/mercury-relay"
+git clone https://github.com/unsupportedpastels/mercury-relay-plugin "${HERMES_HOME:-$HOME/.hermes}/plugins/mercury-relay"
 ```
 
 Then enable it in your Hermes `config.yaml`:
