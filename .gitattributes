@@ -1,0 +1,6 @@
+# Protocol vectors and fixtures are hashed byte for byte by both ends of the
+# channel, so every text file checks out with LF on every platform.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.bat text eol=crlf

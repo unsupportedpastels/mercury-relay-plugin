@@ -22,6 +22,7 @@ from __future__ import annotations
 import errno
 import os
 import stat
+import time
 from contextlib import suppress
 from pathlib import Path
 
@@ -34,6 +35,7 @@ _O_BINARY = getattr(os, "O_BINARY", 0)
 _O_NOINHERIT = getattr(os, "O_NOINHERIT", 0)
 _REPARSE_POINT = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
 _USE_DIR_FD = IS_POSIX and os.open in os.supports_dir_fd and _O_DIRECTORY != 0
+_WINDOWS_REPLACE_RETRY_SECONDS = 2.0
 
 if IS_POSIX:
     import fcntl
@@ -153,8 +155,19 @@ class DirectoryHandle:
         _check_name(destination)
         if self.fd is not None:
             os.replace(source, destination, src_dir_fd=self.fd, dst_dir_fd=self.fd)
-        else:
-            os.replace(self._child(source), self._child(destination))
+            return
+        # Windows refuses to replace a file that another handle currently has
+        # open (a concurrent reader, a second writer racing its own replace,
+        # or an indexer). Such holds are brief, so retry within a small bound.
+        deadline = time.monotonic() + _WINDOWS_REPLACE_RETRY_SECONDS
+        while True:
+            try:
+                os.replace(self._child(source), self._child(destination))
+                return
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.005)
 
     def unlink(self, name: str) -> None:
         _check_name(name)

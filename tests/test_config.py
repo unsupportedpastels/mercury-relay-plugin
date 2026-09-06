@@ -35,7 +35,14 @@ def test_data_root_fallback_uses_home_convention_without_hardcoded_home(monkeypa
     monkeypatch.delenv("HERMES_HOME", raising=False)
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "user"))
 
-    assert resolve_data_root() == tmp_path / "user" / ".hermes"
+    if os.name == "nt":
+        # Hermes itself uses %LOCALAPPDATA%\hermes on Windows.
+        monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local"))
+        assert resolve_data_root() == tmp_path / "local" / "hermes"
+        monkeypatch.delenv("LOCALAPPDATA")
+        assert resolve_data_root() == tmp_path / "user" / "AppData" / "Local" / "hermes"
+    else:
+        assert resolve_data_root() == tmp_path / "user" / ".hermes"
 
 
 @pytest.mark.parametrize(
