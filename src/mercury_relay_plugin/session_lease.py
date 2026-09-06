@@ -219,6 +219,7 @@ class SessionLease:
         on_release: Callable[[], None] | None = None,
         recovery_projection: RecoveryProjection | None = None,
         authorization_epoch: int | None = None,
+        routing_token_provider: Callable[[], str | None] | None = None,
     ) -> None:
         if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
             raise ValueError("invalid device identifier")
@@ -236,6 +237,11 @@ class SessionLease:
         # One device may hold one lease per channel (one per open session);
         # "" is the legacy default channel.
         self.channel = channel
+        # Mints a fresh routing-admission token for the attached device. The
+        # attach preamble carries it over the authenticated channel so a
+        # device's router credential is renewed on every successful attach
+        # and never expires while the device keeps connecting.
+        self._routing_token_provider = routing_token_provider
         self.profile = profile
         self.controller_id = controller_id
         self._lease_id = secrets.token_hex(16)
@@ -434,11 +440,18 @@ class SessionLease:
         # host-side. The attach-status control is the first ordered frame the
         # device receives; on a gap it reconciles from durable transcript
         # reads instead of trusting the replayed suffix.
+        relay_token = None
+        if self._routing_token_provider is not None:
+            try:
+                relay_token = self._routing_token_provider()
+            except Exception:
+                relay_token = None
         preamble = json.dumps(
             {
                 "jsonrpc": "2.0",
                 "method": "relay.lease.attached",
                 "params": {
+                    **({"relay_token": relay_token} if relay_token else {}),
                     "last_seq": self.last_seq,
                     "replay_gap": gap,
                     "replayed_from": replay[0].lease_seq if replay else None,

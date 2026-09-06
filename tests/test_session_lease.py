@@ -72,6 +72,56 @@ def _submit(request_id: str, submission_id: str) -> str:
     )
 
 
+def test_attach_preamble_renews_the_device_routing_token() -> None:
+    """Every attach carries a fresh router token so pairings never age out."""
+
+    async def exercise() -> None:
+        controllers = Controllers()
+        websocket = VirtualWebSocket()
+        minted: list[str] = []
+
+        def provider() -> str:
+            minted.append(f"token-{len(minted) + 1}")
+            return minted[-1]
+
+        lease = SessionLease(
+            device_id="device-1",
+            profile="default",
+            controller_id="controller-1",
+            websocket=websocket,
+            close_controller=controllers.close,
+            routing_token_provider=provider,
+        )
+        lease.start()
+        attachment = lease.attach(0)
+        status = json.loads(await attachment.next_text(timeout=0.5))
+        assert status["params"]["relay_token"] == "token-1"
+        lease.detach(attachment, reason="test")
+        again = lease.attach(0)
+        status = json.loads(await again.next_text(timeout=0.5))
+        assert status["params"]["relay_token"] == "token-2"
+
+        # A provider failure never blocks admission; the field is simply absent.
+        def broken() -> str:
+            raise RuntimeError("no issuer")
+
+        fallback = SessionLease(
+            device_id="device-2",
+            profile="default",
+            controller_id="controller-2",
+            websocket=VirtualWebSocket(),
+            close_controller=controllers.close,
+            routing_token_provider=broken,
+        )
+        fallback.start()
+        status = json.loads(await fallback.attach(0).next_text(timeout=0.5))
+        assert "relay_token" not in status["params"]
+        await lease.release("test")
+        await fallback.release("test")
+
+    asyncio.run(exercise())
+
+
 def test_outer_detach_during_running_turn_keeps_the_controller_alive() -> None:
     async def exercise() -> None:
         websocket = VirtualWebSocket()

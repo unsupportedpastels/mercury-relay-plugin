@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 import json
 import re
 from contextlib import suppress
@@ -203,6 +204,9 @@ class DeviceAdmissionService:
         )
         self._admission_lock = asyncio.Lock()
         self._recovery_store: RecoveryStore | None = None
+        # Set by the connector when a routing issuer exists: every attach then
+        # renews the device's router token inside the encrypted preamble.
+        self.routing_token_provider: Callable[[], str | None] | None = None
 
     def _epoch(self, device_id: str) -> int:
         for device in self.repository.list_devices():
@@ -476,6 +480,7 @@ class DeviceAdmissionService:
             on_release=self._record_active_leases,
             authorization_epoch=epoch,
             recovery_projection=projection,
+            routing_token_provider=self.routing_token_provider,
         )
         try:
             self.leases.register(lease)
