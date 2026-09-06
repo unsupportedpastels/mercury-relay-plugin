@@ -5,6 +5,8 @@ from pathlib import Path
 
 import yaml
 
+import mercury_relay_plugin
+
 PLUGIN_ROOT = Path(__file__).parents[1]
 
 
@@ -12,7 +14,7 @@ def test_plugin_manifest_is_opt_in_backend() -> None:
     manifest = yaml.safe_load((PLUGIN_ROOT / "plugin.yaml").read_text(encoding="utf-8"))
     assert manifest["name"] == "mercury-relay"
     assert manifest["kind"] == "backend"
-    assert manifest["version"] == "0.1.0"
+    assert manifest["version"] == mercury_relay_plugin.__version__
     assert "provides_tools" not in manifest
     assert "hooks" not in manifest
 
