@@ -206,8 +206,28 @@ class RecoveryStore:
         return result[-MAX_ROWS:], self.truncated or len(result) > MAX_ROWS
 
     def revoke(self, installation, device):
-        self.rows = [r for r in self.rows if r["key"][:2] != [installation, device]]
+        # Channel-scoped leases store the device as "<device>/<channel>".
+        prefix = device + "/"
+        self.rows = [
+            r
+            for r in self.rows
+            if not (
+                r["key"][0] == installation
+                and (r["key"][1] == device or str(r["key"][1]).startswith(prefix))
+            )
+        ]
         self._save()
+
+
+def recovery_scope_device(device_id, channel=""):
+    """Durable scope component for one (device, channel) lease.
+
+    The default channel keeps the bare device id so existing lease-recovery
+    rows stay readable; named channels append "/<channel>" (device ids are
+    base64url and never contain "/").
+    """
+
+    return device_id if not channel else f"{device_id}/{channel}"
 
 
 class RecoveryProjection:

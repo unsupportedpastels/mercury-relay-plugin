@@ -664,3 +664,145 @@ def test_runtime_failure_or_cancellation_closes_authenticated_channel(
         await runtime.close()
 
     asyncio.run(exercise())
+
+
+def test_one_device_holds_one_lease_per_channel(tmp_path: Path) -> None:
+    """A phone opens several sessions at once: one lease per named channel.
+
+    Re-opening a channel supersedes only that channel; the legacy envelope with
+    no channel supersedes only the default channel; revocation releases all.
+    """
+
+    async def exercise() -> None:
+        root = tmp_path / "hermes"
+        root.mkdir()
+        repository = AuthorizationRepository(profile_paths(explicit_path=root))
+        controllers = iter(f"controller-{index}" for index in range(10))
+        runtime = RelayRuntime(
+            loader=lambda: compatible_handle_ws,
+            bridge_factory=lambda websocket: FakeBridge(websocket),
+            id_factory=lambda: next(controllers),
+            profile_authorizer=lambda profile: profile == "default",
+        )
+        await runtime.start()
+        service = DeviceAdmissionService(repository, runtime, profile="default")
+
+        offer = repository.create_offer()
+        mobile_private = secrets.token_bytes(32)
+        pairing_mobile = NoiseChannel.initiator(
+            static_private_key=mobile_private,
+            installation_id=offer.installation_id,
+            remote_static_public_key=offer.host_public_key,
+        )
+        pairing_host = service.new_host_channel()
+        capability = _handshake(pairing_mobile, pairing_host, final_payload=offer.capability)
+        pending = service.complete_pairing(pairing_host, capability)
+        repository.approve(pending.device_id, hashlib.sha256(pairing_host.channel_binding).digest())
+
+        async def admit(channel: str | None):
+            mobile = NoiseChannel.initiator(
+                static_private_key=mobile_private,
+                installation_id=offer.installation_id,
+                remote_static_public_key=offer.host_public_key,
+            )
+            host = service.new_host_channel()
+            _handshake(mobile, host, final_payload=b"")
+            envelope = mobile.encrypt(
+                controller_auth_payload(
+                    device_id=pending.device_id, profile="default", channel=channel
+                )
+            )
+            return await service.open_controller(host, envelope)
+
+        first = await admit("sess-a")
+        second = await admit("sess-b")
+        legacy = await admit(None)
+        assert first.lease is not second.lease is not legacy.lease
+        assert first.lease_channel == "sess-a"
+        assert legacy.lease_channel == ""
+        assert runtime.snapshot()["active_controllers"] == 3
+        assert {lease.channel for lease in service.leases.leases_for(pending.device_id)} == {
+            "sess-a",
+            "sess-b",
+            "",
+        }
+
+        # Re-opening one channel supersedes only that channel.
+        replacement = await admit("sess-a")
+        assert first.lease.released and first.lease.release_reason == "superseded"
+        assert not second.lease.released and not legacy.lease.released
+        assert replacement.lease.channel == "sess-a"
+        assert runtime.snapshot()["active_controllers"] == 3
+
+        # A legacy open supersedes only the default channel.
+        legacy_again = await admit(None)
+        assert legacy.lease.released and legacy.lease.release_reason == "superseded"
+        assert not second.lease.released and not replacement.lease.released
+        assert runtime.snapshot()["active_controllers"] == 3
+
+        # Revocation releases every channel the device holds.
+        await service.revoke_device(pending.device_id)
+        assert second.lease.released and replacement.lease.released and legacy_again.lease.released
+        assert service.leases.leases_for(pending.device_id) == []
+        assert runtime.snapshot()["active_controllers"] == 0
+
+        await service.close()
+        await runtime.close()
+
+    asyncio.run(exercise())
+
+
+def test_channel_envelope_validation(tmp_path: Path) -> None:
+    assert controller_auth_payload(device_id="d", profile="default") == (
+        b'{"device_id":"d","profile":"default","type":"controller.open"}'
+    )
+    assert controller_auth_payload(device_id="d", profile="default", channel="s_1-A") == (
+        b'{"channel":"s_1-A","device_id":"d","profile":"default","type":"controller.open"}'
+    )
+    for bad in ("", "has space", "x" * 65, "a/b", "ü"):
+        with pytest.raises(ValueError):
+            controller_auth_payload(device_id="d", profile="default", channel=bad)
+
+    async def rejects(plaintext: bytes) -> None:
+        root = tmp_path / f"hermes-{secrets.token_hex(2)}"
+        root.mkdir()
+        repository = AuthorizationRepository(profile_paths(explicit_path=root))
+        runtime = _runtime()
+        await runtime.start()
+        service = DeviceAdmissionService(repository, runtime, profile="default")
+        offer = repository.create_offer()
+        mobile_private = secrets.token_bytes(32)
+        pairing_mobile = NoiseChannel.initiator(
+            static_private_key=mobile_private,
+            installation_id=offer.installation_id,
+            remote_static_public_key=offer.host_public_key,
+        )
+        pairing_host = service.new_host_channel()
+        capability = _handshake(pairing_mobile, pairing_host, final_payload=offer.capability)
+        pending = service.complete_pairing(pairing_host, capability)
+        repository.approve(pending.device_id, hashlib.sha256(pairing_host.channel_binding).digest())
+        mobile = NoiseChannel.initiator(
+            static_private_key=mobile_private,
+            installation_id=offer.installation_id,
+            remote_static_public_key=offer.host_public_key,
+        )
+        host = service.new_host_channel()
+        _handshake(mobile, host, final_payload=b"")
+        body = plaintext.replace(b"DEVICE", pending.device_id.encode())
+        with pytest.raises(AdmissionRejected, match="invalid_auth_envelope"):
+            await service.open_controller(host, mobile.encrypt(body))
+        assert runtime.snapshot()["active_controllers"] == 0
+        await service.close()
+        await runtime.close()
+
+    asyncio.run(
+        rejects(b'{"channel":"","device_id":"DEVICE","profile":"default","type":"controller.open"}')
+    )
+    asyncio.run(
+        rejects(
+            b'{"channel":"a/b","device_id":"DEVICE","profile":"default","type":"controller.open"}'
+        )
+    )
+    asyncio.run(
+        rejects(b'{"channel":7,"device_id":"DEVICE","profile":"default","type":"controller.open"}')
+    )

@@ -148,7 +148,8 @@ client implementers:
 - [`docs/IMAGE_READ.md`](docs/IMAGE_READ.md): bounded, policy-checked image
   reads from the host's managed file root.
 - [`docs/LEASE_RECOVERY.md`](docs/LEASE_RECOVERY.md): reattaching a device to
-  its retained session after a dropped connection.
+  its retained session after a dropped connection, and lease channels so one
+  phone can keep several sessions open at once.
 
 ## Layout
 

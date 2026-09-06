@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from contextlib import suppress
 from dataclasses import dataclass
 
@@ -16,7 +17,7 @@ from .authorization import (
 from .config import validate_profile_id
 from .connection_journal import ConnectionJournal
 from .controller_transport import EncryptedControllerTransport
-from .lease_recovery import RecoveryProjection, RecoveryStore
+from .lease_recovery import RecoveryProjection, RecoveryStore, recovery_scope_device
 from .operational_metrics import OperationalMetrics
 from .runtime import ProfileNotAvailable, RelayRuntime
 from .secure_channel import NoiseChannel, SecureChannelError
@@ -35,6 +36,20 @@ from .strict_json import loads_strict
 
 AUTH_ENVELOPE_TYPE = "controller.open"
 MAX_AUTH_ENVELOPE_BYTES = 512
+# Optional lease channel: one device may hold one lease per channel, so a phone
+# can keep several Hermes sessions open at once. Absent means the default
+# channel "" and preserves the legacy one-lease-per-device supersede rule.
+MAX_CHANNEL_CHARS = 64
+_CHANNEL_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
+DEFAULT_CHANNEL = ""
+
+
+def validate_channel(value: object) -> str:
+    if value is None:
+        return DEFAULT_CHANNEL
+    if not isinstance(value, str) or _CHANNEL_RE.fullmatch(value) is None:
+        raise ValueError("invalid lease channel")
+    return value
 
 
 class AdmissionRejected(RuntimeError):
@@ -51,6 +66,7 @@ def controller_auth_payload(
     profile: str,
     resume_cursor: int | None = None,
     recovery_version: int | None = None,
+    channel: str | None = None,
 ) -> bytes:
     if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
         raise ValueError("invalid device identifier")
@@ -60,6 +76,8 @@ def controller_auth_payload(
         "device_id": device_id,
         "profile": profile,
     }
+    if channel is not None:
+        envelope["channel"] = validate_channel(channel)
     if resume_cursor is not None:
         if (
             isinstance(resume_cursor, bool)
@@ -80,7 +98,9 @@ def controller_auth_payload(
     ).encode("ascii")
 
 
-def _parse_controller_auth(plaintext: bytes) -> tuple[str, str, int | None, int | None]:
+def _parse_controller_auth(
+    plaintext: bytes,
+) -> tuple[str, str, int | None, int | None, str]:
     if len(plaintext) > MAX_AUTH_ENVELOPE_BYTES:
         raise AdmissionRejected("invalid_auth_envelope")
     try:
@@ -90,7 +110,7 @@ def _parse_controller_auth(plaintext: bytes) -> tuple[str, str, int | None, int 
     required = {"type", "device_id", "profile"}
     if not isinstance(value, dict) or not required <= set(value):
         raise AdmissionRejected("invalid_auth_envelope")
-    if set(value) - required - {"resume_cursor", "recovery_version"}:
+    if set(value) - required - {"resume_cursor", "recovery_version", "channel"}:
         raise AdmissionRejected("invalid_auth_envelope")
     if value["type"] != AUTH_ENVELOPE_TYPE:
         raise AdmissionRejected("invalid_auth_envelope")
@@ -115,7 +135,15 @@ def _parse_controller_auth(plaintext: bytes) -> tuple[str, str, int | None, int 
     recovery_version = value.get("recovery_version")
     if "recovery_version" in value and (type(recovery_version) is not int or recovery_version != 1):
         raise AdmissionRejected("invalid_auth_envelope")
-    return device_id, profile, resume_cursor, recovery_version
+    channel = DEFAULT_CHANNEL
+    if "channel" in value:
+        try:
+            channel = validate_channel(value["channel"])
+        except ValueError:
+            raise AdmissionRejected("invalid_auth_envelope") from None
+        if channel == DEFAULT_CHANNEL:
+            raise AdmissionRejected("invalid_auth_envelope")
+    return device_id, profile, resume_cursor, recovery_version, channel
 
 
 @dataclass(frozen=True, slots=True)
@@ -124,6 +152,7 @@ class AdmittedController:
     channel: NoiseChannel
     lease: SessionLease
     attachment: LeaseAttachment
+    lease_channel: str = DEFAULT_CHANNEL
 
 
 class DeviceAdmissionService:
@@ -262,7 +291,9 @@ class DeviceAdmissionService:
         self._require_unclaimed_host_channel(channel)
         try:
             plaintext = channel.decrypt(encrypted_auth_envelope)
-            device_id, profile, resume_cursor, recovery_version = _parse_controller_auth(plaintext)
+            device_id, profile, resume_cursor, recovery_version, lease_channel = (
+                _parse_controller_auth(plaintext)
+            )
             # Authorization (device status, capability, epoch) is re-proven on
             # every fresh channel, including lease reattach after a detach.
             if not self.repository.is_authorized(device_id, channel.remote_static_public):
@@ -281,8 +312,9 @@ class DeviceAdmissionService:
             if not self.runtime.profile_authorizer(profile):
                 raise AdmissionRejected("profile_not_available")
             epoch = self._epoch(device_id)
-            existing = self.leases.get(device_id)
+            existing = self.leases.get(device_id, lease_channel)
             if existing is not None and existing.authorization_epoch != epoch:
+                # A stale epoch invalidates every lease the device holds.
                 await self.leases.release_device(device_id, reason="authorization_changed")
                 existing = None
             if recovery_version == 1 and existing is None:
@@ -293,6 +325,7 @@ class DeviceAdmissionService:
                     recovery=True,
                     recovery_reset=resume_cursor is not None,
                     epoch=epoch,
+                    lease_channel=lease_channel,
                 )
             elif resume_cursor is not None or recovery_version == 1:
                 lease, attachment = self._reattach_lease(
@@ -301,10 +334,15 @@ class DeviceAdmissionService:
                     resume_cursor or 0,
                     recovery=recovery_version == 1,
                     replace_attached=recovery_version == 1 and resume_cursor is not None,
+                    lease_channel=lease_channel,
                 )
             else:
                 lease, attachment = await self._open_lease(
-                    device_id, profile, channel.remote_static_public, epoch=epoch
+                    device_id,
+                    profile,
+                    channel.remote_static_public,
+                    epoch=epoch,
+                    lease_channel=lease_channel,
                 )
             if (
                 not self.repository.is_authorized(device_id, channel.remote_static_public)
@@ -343,6 +381,7 @@ class DeviceAdmissionService:
             channel=channel,
             lease=lease,
             attachment=attachment,
+            lease_channel=lease_channel,
         )
 
     def _reattach_lease(
@@ -353,8 +392,9 @@ class DeviceAdmissionService:
         *,
         recovery: bool = False,
         replace_attached: bool = False,
+        lease_channel: str = DEFAULT_CHANNEL,
     ) -> tuple[SessionLease, LeaseAttachment]:
-        lease = self.leases.get(device_id)
+        lease = self.leases.get(device_id, lease_channel)
         if lease is None or lease.profile != profile:
             raise AdmissionRejected("lease_not_available")
         if recovery and lease.recovery_projection.store is None:
@@ -379,17 +419,18 @@ class DeviceAdmissionService:
         recovery: bool = False,
         recovery_reset: bool = False,
         epoch: int | None = None,
+        lease_channel: str = DEFAULT_CHANNEL,
     ) -> tuple[SessionLease, LeaseAttachment]:
-        # A fresh open supersedes any retained lease for this device; the
-        # device has declared it does not want the old attachment stream.
-        if self.leases.get(device_id) is not None:
-            await self.leases.release_device(device_id, reason="superseded")
+        # A fresh open supersedes any retained lease on the same channel of
+        # this device; other channels (other open sessions) are untouched.
+        if self.leases.get(device_id, lease_channel) is not None:
+            await self.leases.release_lease(device_id, lease_channel, reason="superseded")
         projection = RecoveryProjection(
             profile,
             store=self._store() if recovery else None,
             scope=(
                 self.repository.identity_store.load_or_create().installation_id.hex(),
-                device_id,
+                recovery_scope_device(device_id, lease_channel),
                 epoch,
             ),
             profile_authorizer=lambda p: self.runtime.profile_authorizer(p),
@@ -425,6 +466,7 @@ class DeviceAdmissionService:
 
         lease = SessionLease(
             device_id=device_id,
+            channel=lease_channel,
             profile=profile,
             controller_id=controller.controller_id,
             websocket=controller.websocket,
@@ -439,8 +481,8 @@ class DeviceAdmissionService:
             self.leases.register(lease)
             attachment = lease.attach(0, recovery=recovery, recovery_reset=recovery_reset)
         except Exception:
-            if self.leases.get(device_id) is lease:
-                await self.leases.release_device(device_id, reason="admission_failed")
+            if self.leases.get(device_id, lease_channel) is lease:
+                await self.leases.release_lease(device_id, lease_channel, reason="admission_failed")
             else:
                 await lease.release("admission_failed")
             raise AdmissionRejected("runtime_unavailable") from None

@@ -35,8 +35,8 @@ MAX_TTL_SECONDS = 600
 DEFAULT_TTL_SECONDS = 300
 MAX_DEVICE_RECORDS = 16
 # Paired phones/tablets allowed at once (pending + authorized). The hosted
-# router still carries one device socket at a time, so concurrent use is
-# last-connected-wins until multi-device transport lands.
+# router multiplexes device sockets and the host holds one lease per
+# (device, channel), so devices and their sessions run concurrently.
 MAX_ACTIVE_DEVICES = 5
 DEVICE_ID_BYTES = 16
 PAIRING_OFFER_ID_BYTES = 16
