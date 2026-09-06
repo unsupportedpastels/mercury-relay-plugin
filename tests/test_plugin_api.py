@@ -66,8 +66,9 @@ def test_status_sanitizes_missing_hermes_contract(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     # Isolate HERMES_HOME so `relay_origin_configured` is deterministic — it
-    # reads the profile's public config, and the machine's real home may have
-    # a relay_origin set. An empty home resolves to a clean False.
+    # reads the profile's public config, and the machine's real home may
+    # override relay_origin. An empty home resolves to the built-in hosted
+    # relay default, so a fresh install reports the origin as configured.
     monkeypatch.setenv("HERMES_HOME", str(tmp_path / "hermes"))
     module = _load_plugin_api()
     module._runtime = module.RelayRuntime(
@@ -86,7 +87,7 @@ def test_status_sanitizes_missing_hermes_contract(
         },
         "active_controllers": 0,
         "max_controllers": 8,
-        "relay_origin_configured": False,
+        "relay_origin_configured": True,
         "relay_connected": False,
         "relay_machine_id": None,
     }

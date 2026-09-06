@@ -40,6 +40,13 @@ def validate_profile_id(profile_id: str) -> str:
 
 MAX_RELAY_ORIGIN_CHARS = 256
 
+# The hosted relay every installation dials unless the owner overrides
+# ``relay_origin`` in the public config. Baked in so a fresh install needs no
+# hand-edited file: the plugin loads, pairs, and connects out of the box. The
+# value goes through the same canonicalization and connection-time
+# re-validation as an operator-supplied origin.
+DEFAULT_RELAY_ORIGIN = "https://mercury-relay-staging.mercury-relay-worker.workers.dev"
+
 
 def canonicalize_relay_origin(origin: Any) -> str:
     """Parse and return the canonical relay origin, or raise.
@@ -275,6 +282,7 @@ _INTEGER_CONFIG_FIELDS = frozenset(
 _DEFAULT_PUBLIC_CONFIG: dict[str, Any] = {
     "schema_version": 1,
     "request_timeout_seconds": 30,
+    "relay_origin": DEFAULT_RELAY_ORIGIN,
 }
 
 
@@ -348,13 +356,20 @@ class PublicConfigStore:
     def load(self) -> dict[str, Any]:
         from .state_store import StateStore
 
-        return StateStore(
+        value = StateStore(
             self.paths.config_path,
             max_bytes=16 * 1024,
             default=self._default(),
             validator=lambda value: validate_public_config(value, self.paths.profile_id),
             private=False,
         ).load()
+        # A hand-written config.json that omits relay_origin (or an older
+        # file from before the default existed) still gets the hosted relay.
+        # Applied at load time only, never written back, so a later change to
+        # the default reaches every installation that has not overridden it.
+        if not value.get("relay_origin"):
+            value["relay_origin"] = DEFAULT_RELAY_ORIGIN
+        return value
 
     def save(self, config: Mapping[str, Any]) -> None:
         from .state_store import StateStore

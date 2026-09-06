@@ -152,6 +152,21 @@ and crop it), use **Copy pairing code** next to the QR and paste the code into
 Mercury instead. The code carries the same one-time secret as the QR and
 expires with it.
 
+### Relay origin
+
+The plugin dials the hosted Mercury relay by default, so a fresh install needs
+no relay configuration at all. To point an installation at a different relay
+(your own deployment of the router, for example), set `relay_origin` in the
+plugin's public config file, `mercury-relay/config.json` under the gateway's
+Hermes home, and restart the gateway:
+
+```json
+{"schema_version": 1, "profile_id": "default", "relay_origin": "https://relay.example.net"}
+```
+
+The value must be a bare `https` or `wss` origin: scheme and host, optional
+port, nothing else. Leave the field out to use the hosted relay.
+
 ### Getting the hosted relay to accept this host
 
 The hosted relay only routes for installations the relay operator has
