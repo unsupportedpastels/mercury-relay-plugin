@@ -209,6 +209,7 @@ class SessionLease:
         device_id: str,
         profile: str,
         controller_id: str,
+        channel: str = "",
         websocket: Any,
         close_controller: Callable[[str], Awaitable[bool]],
         limits: LeaseLimits | None = None,
@@ -218,6 +219,7 @@ class SessionLease:
         on_release: Callable[[], None] | None = None,
         recovery_projection: RecoveryProjection | None = None,
         authorization_epoch: int | None = None,
+        routing_token_provider: Callable[[], str | None] | None = None,
     ) -> None:
         if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
             raise ValueError("invalid device identifier")
@@ -229,7 +231,17 @@ class SessionLease:
             raise TypeError("read_dispatcher must be callable")
         if on_release is not None and not callable(on_release):
             raise TypeError("on_release must be callable")
+        if not isinstance(channel, str) or len(channel) > 64:
+            raise ValueError("invalid lease channel")
         self.device_id = device_id
+        # One device may hold one lease per channel (one per open session);
+        # "" is the legacy default channel.
+        self.channel = channel
+        # Mints a fresh routing-admission token for the attached device. The
+        # attach preamble carries it over the authenticated channel so a
+        # device's router credential is renewed on every successful attach
+        # and never expires while the device keeps connecting.
+        self._routing_token_provider = routing_token_provider
         self.profile = profile
         self.controller_id = controller_id
         self._lease_id = secrets.token_hex(16)
@@ -428,11 +440,18 @@ class SessionLease:
         # host-side. The attach-status control is the first ordered frame the
         # device receives; on a gap it reconciles from durable transcript
         # reads instead of trusting the replayed suffix.
+        relay_token = None
+        if self._routing_token_provider is not None:
+            try:
+                relay_token = self._routing_token_provider()
+            except Exception:
+                relay_token = None
         preamble = json.dumps(
             {
                 "jsonrpc": "2.0",
                 "method": "relay.lease.attached",
                 "params": {
+                    **({"relay_token": relay_token} if relay_token else {}),
                     "last_seq": self.last_seq,
                     "replay_gap": gap,
                     "replayed_from": replay[0].lease_seq if replay else None,
@@ -654,44 +673,81 @@ class SessionLease:
 
 
 class SessionLeaseManager:
-    """Installation-scoped registry mapping one device to at most one lease."""
+    """Installation-scoped registry: at most one lease per (device, channel).
+
+    A device with no channel (legacy clients) still gets exactly one lease.
+    Devices that name channels hold one lease per channel, so one phone can
+    keep several Hermes sessions open, bounded by ``max_leases`` overall.
+    """
 
     def __init__(self, *, max_leases: int = 8) -> None:
         if isinstance(max_leases, bool) or not isinstance(max_leases, int) or max_leases < 1:
             raise ValueError("max_leases must be a positive integer")
         self.max_leases = max_leases
-        self._leases: dict[str, SessionLease] = {}
+        self._leases: dict[tuple[str, str], SessionLease] = {}
         self.closed = False
 
     @property
     def active_count(self) -> int:
         return sum(1 for lease in self._leases.values() if not lease.released)
 
-    def get(self, device_id: str) -> SessionLease | None:
-        lease = self._leases.get(device_id)
+    def get(self, device_id: str, channel: str = "") -> SessionLease | None:
+        key = (device_id, channel)
+        lease = self._leases.get(key)
         if lease is not None and lease.released:
-            del self._leases[device_id]
+            del self._leases[key]
             return None
         return lease
+
+    def leases_for(self, device_id: str) -> list[SessionLease]:
+        """Every live lease the device holds, across channels."""
+
+        return [
+            lease
+            for (owner, _channel), lease in list(self._leases.items())
+            if owner == device_id and not lease.released
+        ]
 
     def register(self, lease: SessionLease) -> None:
         if self.closed:
             raise SessionLeaseError("manager_closed")
         if not isinstance(lease, SessionLease):
             raise TypeError("lease must be a SessionLease")
-        if self.get(lease.device_id) is not None:
+        if self.get(lease.device_id, lease.channel) is not None:
             raise SessionLeaseError("device_already_leased")
         self._leases = {key: item for key, item in self._leases.items() if not item.released}
         if len(self._leases) >= self.max_leases:
             raise SessionLeaseError("lease_limit_reached")
-        self._leases[lease.device_id] = lease
+        self._leases[(lease.device_id, lease.channel)] = lease
         lease.start()
 
-    async def release_device(self, device_id: str, *, reason: str = "released") -> bool:
-        lease = self._leases.pop(device_id, None)
+    async def release_lease(
+        self, device_id: str, channel: str = "", *, reason: str = "released"
+    ) -> bool:
+        """Release exactly one (device, channel) lease."""
+
+        lease = self._leases.pop((device_id, channel), None)
         if lease is None:
             return False
         return await lease.release(reason)
+
+    async def release_device(self, device_id: str, *, reason: str = "released") -> bool:
+        """Release every lease the device holds (revocation, epoch change)."""
+
+        keys = [key for key in self._leases if key[0] == device_id]
+        released = False
+        failure: SessionLeaseError | None = None
+        for key in keys:
+            lease = self._leases.pop(key, None)
+            if lease is None:
+                continue
+            try:
+                released = await lease.release(reason) or released
+            except SessionLeaseError as error:
+                failure = error
+        if failure is not None:
+            raise failure
+        return released
 
     async def close(self) -> None:
         """Release every lease exactly once at plugin shutdown."""

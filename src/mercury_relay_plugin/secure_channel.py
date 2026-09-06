@@ -80,9 +80,7 @@ def _exact_bytes(
 
 
 def public_key(private_key: bytes) -> bytes:
-    private = x25519.X25519PrivateKey.from_private_bytes(
-        _exact_bytes(private_key, size=KEY_BYTES)
-    )
+    private = x25519.X25519PrivateKey.from_private_bytes(_exact_bytes(private_key, size=KEY_BYTES))
     return private.public_key().public_bytes(
         encoding=serialization.Encoding.Raw,
         format=serialization.PublicFormat.Raw,

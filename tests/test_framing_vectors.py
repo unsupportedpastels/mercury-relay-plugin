@@ -71,9 +71,7 @@ def test_exact_16mib_boundary_is_one_contract() -> None:
     assert MAX_FRAGMENT_COUNT == 257
 
     schema = json.loads(
-        (REPOSITORY_ROOT / "protocol/schemas/framing-envelope-v1.json").read_text(
-            encoding="utf-8"
-        )
+        (REPOSITORY_ROOT / "protocol/schemas/framing-envelope-v1.json").read_text(encoding="utf-8")
     )
     assert schema["logical_message_max_bytes"] == MAX_LOGICAL_MESSAGE_BYTES
     assert schema["max_fragment_count"] == MAX_FRAGMENT_COUNT

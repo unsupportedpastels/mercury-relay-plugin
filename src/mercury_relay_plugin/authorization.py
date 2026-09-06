@@ -35,8 +35,8 @@ MAX_TTL_SECONDS = 600
 DEFAULT_TTL_SECONDS = 300
 MAX_DEVICE_RECORDS = 16
 # Paired phones/tablets allowed at once (pending + authorized). The hosted
-# router still carries one device socket at a time, so concurrent use is
-# last-connected-wins until multi-device transport lands.
+# router multiplexes device sockets and the host holds one lease per
+# (device, channel), so devices and their sessions run concurrently.
 MAX_ACTIVE_DEVICES = 5
 DEVICE_ID_BYTES = 16
 PAIRING_OFFER_ID_BYTES = 16
@@ -69,6 +69,24 @@ _DEVICE_FIELDS = frozenset(
         "capabilities",
     }
 )
+# Optional, owner-visible metadata. device_name is what the phone reported in
+# its admission envelope; label is the nickname set on the dashboard. Neither
+# affects authorization, epochs, or key material.
+_OPTIONAL_DEVICE_FIELDS = frozenset({"device_name", "label"})
+MAX_DEVICE_NAME_CHARS = 64
+
+
+def _clean_device_text(value: object) -> str | None:
+    """Bounded, control-free display text; None when unusable."""
+
+    if not isinstance(value, str):
+        return None
+    cleaned = " ".join(value.split())
+    if not cleaned or len(cleaned) > MAX_DEVICE_NAME_CHARS:
+        return None
+    if any(ord(ch) < 0x20 or ord(ch) == 0x7F for ch in cleaned):
+        return None
+    return cleaned
 
 
 class AuthorizationError(IdentityError):
@@ -93,6 +111,14 @@ class DeviceSummary:
     updated_at: int
     epoch: int
     capabilities: tuple[str, ...]
+    device_name: str = ""
+    label: str = ""
+
+    @property
+    def display_name(self) -> str:
+        """Owner nickname, else the phone's own name, else the fingerprint."""
+
+        return self.label or self.device_name or self.fingerprint
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -103,6 +129,9 @@ class DeviceSummary:
             "updated_at": self.updated_at,
             "epoch": self.epoch,
             "capabilities": list(self.capabilities),
+            "device_name": self.device_name,
+            "label": self.label,
+            "display_name": self.display_name,
         }
 
     def __getitem__(self, key: str) -> Any:
@@ -223,8 +252,19 @@ def _validate_auth_state(state: Mapping[str, Any]) -> None:
     identifiers: set[str] = set()
     active = 0
     for record in devices:
-        if not isinstance(record, Mapping) or set(record) != _DEVICE_FIELDS:
+        if not isinstance(record, Mapping):
             raise ValueError
+        if (
+            not set(record) >= _DEVICE_FIELDS
+            or set(record) - _DEVICE_FIELDS - _OPTIONAL_DEVICE_FIELDS
+        ):
+            raise ValueError
+        for field in _OPTIONAL_DEVICE_FIELDS:
+            if field in record and (
+                not isinstance(record[field], str)
+                or (record[field] != "" and _clean_device_text(record[field]) != record[field])
+            ):
+                raise ValueError
         device_id = record.get("device_id")
         if (
             not isinstance(device_id, str)
@@ -292,6 +332,8 @@ def _summary(record: Mapping[str, Any]) -> DeviceSummary:
         updated_at=record["updated_at"],
         epoch=record["epoch"],
         capabilities=tuple(record["capabilities"]),
+        device_name=record.get("device_name", ""),
+        label=record.get("label", ""),
     )
 
 
@@ -486,15 +528,11 @@ class AuthorizationRepository:
                 overflow = len(state["devices"]) - MAX_DEVICE_RECORDS + 1
                 pruned_ids = {record["device_id"] for record in denied[:overflow]}
                 state["devices"] = [
-                    record
-                    for record in state["devices"]
-                    if record["device_id"] not in pruned_ids
+                    record for record in state["devices"] if record["device_id"] not in pruned_ids
                 ]
 
             active_count = sum(
-                1
-                for record in state["devices"]
-                if record["status"] in {"pending", "authorized"}
+                1 for record in state["devices"] if record["status"] in {"pending", "authorized"}
             )
             revoked_key = False
             for record in state["devices"]:
@@ -618,6 +656,65 @@ class AuthorizationRepository:
             state["devices"][index] = updated
             self._save_state_unlocked(state)
             return _summary(updated)
+
+    def set_label(self, device_id: str, label: str) -> DeviceSummary | None:
+        """Owner nickname for a device; empty clears it. No epoch change."""
+
+        try:
+            _b64url_decode_exact(device_id, DEVICE_ID_BYTES)
+        except (TypeError, ValueError):
+            raise AuthorizationError("invalid device identifier") from None
+        cleaned = "" if label == "" else _clean_device_text(label)
+        if cleaned is None:
+            raise AuthorizationError("invalid label")
+        with _transaction_lock(self.paths):
+            state = self._load_state_unlocked()
+            record = next(
+                (item for item in state["devices"] if item["device_id"] == device_id), None
+            )
+            if record is None:
+                return None
+            updated = dict(record)
+            updated["label"] = cleaned
+            index = state["devices"].index(record)
+            state["devices"][index] = updated
+            self._save_state_unlocked(state)
+            return _summary(updated)
+
+    def note_device_name(self, device_id: str, device_public_key: bytes, name: object) -> bool:
+        """Record the name a phone reports about itself in its admission envelope.
+
+        Only the record whose static key matches the authenticated channel may
+        be named, for pending or authorized devices; anything else is ignored.
+        """
+
+        cleaned = _clean_device_text(name)
+        if cleaned is None:
+            return False
+        try:
+            _b64url_decode_exact(device_id, DEVICE_ID_BYTES)
+            public_key = _exact_input(device_public_key)
+        except (TypeError, ValueError):
+            return False
+        with _transaction_lock(self.paths):
+            state = self._load_state_unlocked()
+            record = next(
+                (item for item in state["devices"] if item["device_id"] == device_id), None
+            )
+            if record is None or record["status"] not in {"pending", "authorized"}:
+                return False
+            if not hmac.compare_digest(
+                _b64decode_exact(record["device_public_key"], RAW_BYTES), public_key
+            ):
+                return False
+            if record.get("device_name", "") == cleaned:
+                return True
+            updated = dict(record)
+            updated["device_name"] = cleaned
+            index = state["devices"].index(record)
+            state["devices"][index] = updated
+            self._save_state_unlocked(state)
+            return True
 
     def deny(self, device_id: str) -> DeviceSummary | None:
         try:

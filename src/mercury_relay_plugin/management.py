@@ -175,9 +175,7 @@ class ManagementService:
     def pending_devices(self) -> dict[str, Any]:
         return {
             "devices": [
-                summary.to_dict()
-                for summary in self._device_list()
-                if summary.status == "pending"
+                summary.to_dict() for summary in self._device_list() if summary.status == "pending"
             ]
         }
 
@@ -220,6 +218,23 @@ class ManagementService:
             self.admission.refresh_registered_devices()
             return summary.to_dict()
         raise ManagementError("invalid_body", 400)
+
+    def label_device(self, device_id: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        """Set or clear the owner's nickname for a device."""
+
+        _require_device_id(device_id)
+        if not isinstance(body, Mapping) or set(body) != {"label"}:
+            raise ManagementError("invalid_body", 400)
+        label = body["label"]
+        if not isinstance(label, str) or len(label) > 256:
+            raise ManagementError("invalid_body", 400)
+        try:
+            summary = self.repository.set_label(device_id, label)
+        except AuthorizationError:
+            raise ManagementError("invalid_body", 400) from None
+        if summary is None:
+            raise ManagementError("device_not_found", 404)
+        return summary.to_dict()
 
     def deny_device(self, device_id: str) -> dict[str, Any]:
         _require_device_id(device_id)

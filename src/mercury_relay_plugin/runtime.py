@@ -47,8 +47,7 @@ def _local_profile_exists(profile: str) -> bool:
         from hermes_cli.profiles import get_active_profile_name, get_profile_dir
 
         return (
-            profile == (get_active_profile_name() or "default")
-            or get_profile_dir(profile).is_dir()
+            profile == (get_active_profile_name() or "default") or get_profile_dir(profile).is_dir()
         )
     except ImportError:
         # Standalone plugin tests do not install Hermes. Production plugin

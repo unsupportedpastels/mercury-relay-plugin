@@ -12,6 +12,24 @@ launch should use cursor 0 unless it durably checkpointed both cursor and reduce
 state. Authorization, authorization epoch, and current profile availability are
 checked again at admission; no recovery RPC discovers or resurrects computation.
 
+## Lease channels (several sessions per device)
+
+`controller.open` may carry `"channel"`: 1–64 characters of `[A-Za-z0-9_-]`.
+The host keeps **one lease per (device, channel)**, so a client that opens one
+channel per session runs several Hermes sessions at once over separate device
+sockets (the router multiplexes them). Rules:
+
+- No `channel` field is the default channel `""` and keeps the legacy
+  behaviour: a fresh open supersedes the device's retained default lease only.
+- A fresh open on a named channel supersedes only that channel's retained
+  lease; other channels are untouched.
+- Reattach (`resume_cursor` / `recovery_version`) looks up the lease by
+  (device, channel).
+- Revocation and an authorization-epoch change release every channel the
+  device holds. Total leases per host stay bounded by `max_controllers`.
+- Durable recovery rows for a named channel are scoped as
+  `<device_id>/<channel>`; default-channel rows keep the bare device id.
+
 ## Wire
 
 The first notification is `relay.lease.attached`. Existing `last_seq`,

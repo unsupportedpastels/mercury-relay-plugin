@@ -54,9 +54,7 @@ def _app(module) -> FastAPI:
             raise HTTPException(status_code=401, detail="unauthenticated")
 
     app = FastAPI()
-    app.include_router(
-        module.router, prefix=PREFIX, dependencies=[Depends(require_dashboard_auth)]
-    )
+    app.include_router(module.router, prefix=PREFIX, dependencies=[Depends(require_dashboard_auth)])
     return app
 
 
@@ -125,10 +123,7 @@ def test_pairing_offer_lifecycle_returns_capability_exactly_once(
         assert "host_public_key" not in status
         assert offer["capability"] not in redacted.text
 
-        assert (
-            client.get(f"{PREFIX}/pairing-offers/unknown-offer", headers=AUTH).status_code
-            == 404
-        )
+        assert client.get(f"{PREFIX}/pairing-offers/unknown-offer", headers=AUTH).status_code == 404
         second = client.post(f"{PREFIX}/pairing-offers", headers=AUTH, content="{}")
         assert second.status_code == 409
         bad_body = client.post(
@@ -184,17 +179,13 @@ def test_device_lifecycle_requires_full_sas_digest_and_redacts_material(
         assert revoked.json()["status"] == "revoked"
         assert module._admission.metrics.snapshot()["registered_devices"] == 0
         assert (
-            client.post(
-                f"{PREFIX}/devices/{pending.device_id}/revoke", headers=AUTH
-            ).status_code
+            client.post(f"{PREFIX}/devices/{pending.device_id}/revoke", headers=AUTH).status_code
             == 200
         )
         readback = client.get(f"{PREFIX}/devices", headers=AUTH).json()["devices"]
         assert readback[0]["status"] == "revoked"
         assert readback[0]["capabilities"] == []
-        assert (
-            client.post(f"{PREFIX}/devices/unknown-id/revoke", headers=AUTH).status_code == 404
-        )
+        assert client.post(f"{PREFIX}/devices/unknown-id/revoke", headers=AUTH).status_code == 404
 
         # No key, binding, or capability material leaves the management plane.
         for response in (listed, devices, readback):
@@ -214,6 +205,44 @@ def test_device_lifecycle_requires_full_sas_digest_and_redacts_material(
         }
         assert diagnostics["active_leases"] == 0
         assert diagnostics["pairing_offer_status"] == "consumed"
+
+
+def test_owner_can_nickname_a_device_from_the_dashboard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module, client = _client(tmp_path, monkeypatch)
+    with client:
+        repository = module._admission.repository
+        offer = repository.create_offer()
+        pending = repository.consume_offer(
+            offer.capability, secrets.token_bytes(32), secrets.token_bytes(32)
+        )
+        url = f"{PREFIX}/devices/{pending.device_id}/label"
+        assert (
+            client.post(
+                url, headers=AUTH, content=json.dumps({"label": "Kitchen phone"})
+            ).status_code
+            == 200
+        )
+        listed = client.get(f"{PREFIX}/devices", headers=AUTH).json()["devices"][0]
+        assert listed["label"] == "Kitchen phone"
+        assert listed["display_name"] == "Kitchen phone"
+        assert listed["device_name"] == ""
+        assert (
+            client.post(url, headers=AUTH, content=json.dumps({"label": "x" * 65})).status_code
+            == 400
+        )
+        assert client.post(url, headers=AUTH, content=json.dumps({"nope": "y"})).status_code == 400
+        assert client.post(url, headers=AUTH, content=json.dumps({"label": ""})).status_code == 200
+        assert (
+            client.get(f"{PREFIX}/devices", headers=AUTH).json()["devices"][0]["display_name"]
+            == listed["fingerprint"]
+        )
+        missing = f"{PREFIX}/devices/{'A' * 22}/label"
+        assert (
+            client.post(missing, headers=AUTH, content=json.dumps({"label": "z"})).status_code
+            == 404
+        )
 
 
 def test_fingerprint_confirmation_approval_for_the_dashboard_page(
@@ -261,9 +290,7 @@ def test_oversized_and_malformed_bodies_are_rejected(
     _module, client = _client(tmp_path, monkeypatch)
     with client:
         huge = json.dumps({"channel_binding_digest": "x" * 5000})
-        response = client.post(
-            f"{PREFIX}/devices/any/approve", headers=AUTH, content=huge
-        )
+        response = client.post(f"{PREFIX}/devices/any/approve", headers=AUTH, content=huge)
         assert response.status_code == 413
         malformed = client.post(
             f"{PREFIX}/pairing-offers", headers=AUTH, content='{"ttl_seconds": NaN}'
@@ -335,6 +362,7 @@ def test_qr_render_failure_fails_the_create_and_frees_the_offer(
 
     _module, client = _client(tmp_path, monkeypatch)
     with client:
+
         def broken_qr(_offer, **_kwargs):
             raise RuntimeError("sensitive encoder detail")
 

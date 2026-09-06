@@ -36,9 +36,7 @@ def test_mint_and_verify_round_trip_for_every_role() -> None:
         (ROLE_AUTHORIZED_DEVICE, AUTHORIZED_DEVICE_TOKEN_TTL_SECONDS),
     ):
         token = issuer.mint(role=role, installation_id=INSTALLATION, ttl_seconds=ttl)
-        claims = verify_routing_token(
-            token, public_key=issuer.public_key, now=1_000_000
-        )
+        claims = verify_routing_token(token, public_key=issuer.public_key, now=1_000_000)
         assert claims["role"] == role
         assert claims["aud"] == "mercury-relay"
         assert claims["exp"] - claims["iat"] == ttl

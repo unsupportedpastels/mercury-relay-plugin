@@ -148,7 +148,25 @@ client implementers:
 - [`docs/IMAGE_READ.md`](docs/IMAGE_READ.md): bounded, policy-checked image
   reads from the host's managed file root.
 - [`docs/LEASE_RECOVERY.md`](docs/LEASE_RECOVERY.md): reattaching a device to
-  its retained session after a dropped connection.
+  its retained session after a dropped connection, and lease channels so one
+  phone can keep several sessions open at once.
+
+## Updates
+
+The plugin checks the public repo's latest release once on gateway start and
+then every six hours (one anonymous `GET` to
+`api.github.com/repos/unsupportedpastels/mercury-relay-plugin/releases/latest`;
+nothing but a version string is read). The relay page shows the result, and a
+pulsing "Relay update" pill appears in the dashboard header and the desktop
+status bar while a newer release exists. Set `update_check: false` in the
+plugin's public config to turn the timer off; "Check now" still works.
+
+"Update now" never replaces code itself. It runs Hermes' own
+`hermes plugins update mercury-relay`, so Hermes' install validation and
+supply-chain scan apply, and it only works for git checkouts that are not
+pinned. Restart the gateway afterwards to load the new version. From Hermes
+Desktop pointed at a remote gateway, the button updates that gateway's plugin;
+the desktop half updates from Settings ▸ Plugins on the computer running it.
 
 ## Layout
 

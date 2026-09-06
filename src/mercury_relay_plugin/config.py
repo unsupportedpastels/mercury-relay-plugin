@@ -317,6 +317,10 @@ def validate_public_config(config: Mapping[str, Any], profile_id: str) -> dict[s
             number = value[field]
             if isinstance(number, bool) or not isinstance(number, int) or number < 0:
                 raise ProfileConfigError("invalid integer configuration")
+    # update_check: one anonymous release-version GET to GitHub every six
+    # hours (plus on start). Off means the page only checks when asked.
+    if "update_check" in value and not isinstance(value["update_check"], bool):
+        raise ProfileConfigError("invalid update_check configuration")
     timeout = value.get("request_timeout_seconds")
     if timeout is not None and (timeout < 1 or timeout > 300):
         raise ProfileConfigError("invalid timeout configuration")

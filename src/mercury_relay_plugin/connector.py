@@ -157,6 +157,10 @@ class RelayConnectorService:
                 )
             except Exception:
                 self._installation_id = None
+            # Renew the device's routing token on every lease attach so a
+            # paired phone never has to re-pair just because its Phase 0
+            # token aged out.
+            admission.routing_token_provider = self._mint_device_routing_token
         self.max_connections = max_connections
         self.handshake_timeout = float(handshake_timeout)
         self._accept_task: asyncio.Task[None] | None = None
@@ -449,9 +453,7 @@ class RelayConnectorService:
         async def outbound() -> None:
             while True:
                 for ciphertext in await transport.next_ciphertexts():
-                    await self._send_bounded(
-                        connection, ciphertext, connection_id=connection_id
-                    )
+                    await self._send_bounded(connection, ciphertext, connection_id=connection_id)
 
         pumps = [
             asyncio.create_task(inbound(), name="mercury-relay-inbound"),
