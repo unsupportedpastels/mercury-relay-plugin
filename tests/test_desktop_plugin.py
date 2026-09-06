@@ -105,3 +105,24 @@ def test_active_panel_state_is_scoped_by_connection() -> None:
     # when it changes, clearing the local one-time QR offer and errors.
     assert "connectionId: activeConnectionId" in src
     assert "key: activeConnectionId || 'no-connection'" in src
+
+
+DASHBOARD_JS = Path(__file__).parents[1] / "dashboard" / "dist" / "index.js"
+
+
+@pytest.mark.parametrize("source_path", [PLUGIN_JS, DASHBOARD_JS], ids=["desktop", "dashboard"])
+def test_pairing_code_is_copyable_but_never_rendered_as_text(source_path: Path) -> None:
+    """A phone whose camera auto-zooms past the QR can still pair: both UI
+    halves offer a Copy button for the payload the QR encodes. The payload is
+    handed to the clipboard only; it is never placed in the DOM as text."""
+
+    src = source_path.read_text(encoding="utf-8")
+    assert "Copy pairing code" in src
+    assert "copyText(offer.pairing_payload)" in src
+    # Clipboard write has a non-secure-context fallback (dashboard over LAN http).
+    assert "navigator.clipboard" in src
+    assert 'execCommand' in src
+    # The payload is never interpolated into an element's children.
+    assert "}, offer.pairing_payload)" not in src
+    assert "mr-fingerprint' }, offer.pairing_payload" not in src
+    assert 'mr-fingerprint" }, offer.pairing_payload' not in src

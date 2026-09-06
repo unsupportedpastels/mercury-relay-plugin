@@ -147,7 +147,10 @@ plugins:
 Whichever option you used, restart the gateway (`hermes gateway restart`).
 The dashboard gains a **Mercury Relay** tab where you create a
 one-time pairing QR, compare the fingerprint the phone shows, and approve or
-revoke devices.
+revoke devices. If the phone's camera cannot read the QR (some cameras zoom in
+and crop it), use **Copy pairing code** next to the QR and paste the code into
+Mercury instead. The code carries the same one-time secret as the QR and
+expires with it.
 
 ### Getting the hosted relay to accept this host
 

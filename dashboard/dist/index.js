@@ -11,8 +11,9 @@
  *
  * The QR is rendered server-side (returned as an inline SVG in the create
  * response), so both this page and the desktop plugin show one identical QR.
- * The raw pairing capability lives only in the create-offer response and only
- * inside the QR image; it is never stored by this page or shown as text.
+ * The raw pairing capability lives only in the create-offer response: inside
+ * the QR image, and behind a "Copy pairing code" button for phones whose
+ * camera cannot read the QR. It is never stored by this page or shown as text.
  */
 (function () {
   "use strict";
@@ -63,6 +64,38 @@
       [props.svg],
     );
     return h("div", { className: "mr-qr", ref: ref });
+  }
+
+  // Copy text to the clipboard. The async Clipboard API needs a secure
+  // context (https or localhost) and a user gesture; a dashboard reached
+  // over plain http on the LAN has no navigator.clipboard, so fall back to
+  // a transient textarea + execCommand. Resolves true when a copy happened.
+  function copyText(text) {
+    if (typeof text !== "string" || !text) return Promise.resolve(false);
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(
+        function () { return true; },
+        function () { return copyTextLegacy(text); },
+      );
+    }
+    return Promise.resolve(copyTextLegacy(text));
+  }
+
+  function copyTextLegacy(text) {
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      var ok = document.execCommand && document.execCommand("copy");
+      document.body.removeChild(ta);
+      return Boolean(ok);
+    } catch (e) {
+      return false;
+    }
   }
 
   function Countdown(props) {
@@ -186,6 +219,9 @@
     var offerState = useState(null);
     var offer = offerState[0];
     var setOffer = offerState[1];
+    var copiedState = useState(null);
+    var copied = copiedState[0];
+    var setCopied = copiedState[1];
     var devicesState = useState([]);
     var devices = devicesState[0];
     var setDevices = devicesState[1];
@@ -254,6 +290,7 @@
       setErr(null);
       authed("/pairing-offers", jsonBody({}))
         .then(function (o) {
+          setCopied(null);
           setOffer(o);
           refresh();
         })
@@ -372,9 +409,27 @@
                 h("div", { className: "mr-fingerprint" }, offer.offer_id),
                 h("div", { className: "mr-muted", style: { marginTop: "10px" } },
                   h(Countdown, { expiresAt: offer.expires_at })),
+                // Camera trouble (auto-zoom cropping the code, no camera at
+                // all): the same payload the QR encodes can be copied and
+                // pasted into Mercury. It is copied, never rendered as text.
+                h("div", { className: "mr-row", style: { marginTop: "10px" } },
+                  h("button", {
+                    className: "mr-btn mr-ghost",
+                    disabled: !offer.pairing_payload,
+                    onClick: function () {
+                      copyText(offer.pairing_payload).then(function (ok) {
+                        setCopied(ok ? "copied" : "failed");
+                        setTimeout(function () { setCopied(null); }, 2000);
+                      });
+                    },
+                  }, copied === "copied" ? "Copied" : "Copy pairing code"),
+                  copied === "failed"
+                    ? h("span", { className: "mr-muted" }, "Clipboard unavailable")
+                    : null),
                 h("div", { className: "mr-muted", style: { marginTop: "10px" } },
-                  "This QR contains the one-time pairing secret. It is shown once and " +
-                    "is never stored or displayed as text."),
+                  "This QR contains the one-time pairing secret. Scan it, or copy the " +
+                    "pairing code and paste it into Mercury if the camera cannot read " +
+                    "the QR. It is shown once and never stored or displayed as text."),
               ),
             )
           : null,
@@ -463,9 +518,7 @@
               h("button", {
                 className: "mr-btn mr-ghost",
                 onClick: function () {
-                  if (navigator.clipboard && navigator.clipboard.writeText) {
-                    navigator.clipboard.writeText(diag.relay_machine_id).catch(function () {});
-                  }
+                  copyText(diag.relay_machine_id);
                 },
               }, "Copy")),
           )
