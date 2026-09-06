@@ -63,7 +63,7 @@
       },
       [props.svg],
     );
-    return h("div", { className: "mr-qr", ref: ref });
+    return h("div", { className: "mr-qr", ref: ref, title: props.title, onClick: props.onClick });
   }
 
   // Copy text to the clipboard. The async Clipboard API needs a secure
@@ -222,6 +222,9 @@
     var copiedState = useState(null);
     var copied = copiedState[0];
     var setCopied = copiedState[1];
+    var enlargedState = useState(false);
+    var enlarged = enlargedState[0];
+    var setEnlarged = enlargedState[1];
     var devicesState = useState([]);
     var devices = devicesState[0];
     var setDevices = devicesState[1];
@@ -291,6 +294,7 @@
       authed("/pairing-offers", jsonBody({}))
         .then(function (o) {
           setCopied(null);
+          setEnlarged(false);
           setOffer(o);
           refresh();
         })
@@ -401,7 +405,19 @@
           ? h(
               "div",
               { className: "mr-qr-wrap", style: { marginTop: "16px" } },
-              h(QrImage, { svg: offer.qr_svg }),
+              // Drawn large by default and click-to-enlarge: a bigger target
+              // scans from further away, so phone cameras do not have to zoom
+              // in on a dense code (and overshoot it) to read it.
+              h(QrImage, {
+                svg: offer.qr_svg,
+                title: "Click to enlarge",
+                onClick: function () { setEnlarged(true); },
+              }),
+              enlarged
+                ? h("div", { className: "mr-qr-overlay", onClick: function () { setEnlarged(false); } },
+                    h(QrImage, { svg: offer.qr_svg }),
+                    h("div", { className: "mr-muted" }, "Scan with Mercury. Click anywhere to close."))
+                : null,
               h(
                 "div",
                 { style: { flex: "1", minWidth: "220px" } },

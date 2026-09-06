@@ -47,13 +47,31 @@ def test_offer_is_single_active_bounded_and_secret_safe(tmp_path: Path) -> None:
     assert offer.to_public_dict()["offer_id"] == offer.offer_id
     assert "capability" not in offer.to_public_dict()
 
-    with pytest.raises(AuthorizationError, match="pairing offer already active"):
-        repo.create_offer()
-
     state_text = paths.state_path.read_text(encoding="utf-8")
     assert base64.b64encode(offer.capability).decode("ascii") not in state_text
     assert base64.b64encode(hashlib.sha256(offer.capability).digest()).decode("ascii") in state_text
     assert stat.S_IMODE(paths.state_path.stat().st_mode) == 0o600
+
+
+def test_new_offer_supersedes_the_active_one(tmp_path: Path) -> None:
+    """The owner asking for a new QR always gets one. The previous offer's
+    capability stops working the moment the new offer exists, so at most one
+    offer is ever redeemable."""
+
+    paths = make_paths(tmp_path)
+    repo = AuthorizationRepository(paths, clock=lambda: 1000)
+    first = repo.create_offer()
+    second = repo.create_offer()
+
+    assert second.offer_id != first.offer_id
+    assert repo.offer_status()["offer_id"] == second.offer_id
+    assert repo.offer_status()["status"] == "active"
+    device_key = bytes(range(32))
+    channel_binding = bytes(32)
+    with pytest.raises(PairingRejected):
+        repo.consume_offer(first.capability, device_key, channel_binding)
+    # The superseding offer itself still redeems normally.
+    assert repo.consume_offer(second.capability, device_key, channel_binding) is not None
 
 
 def test_consume_rejects_all_wrong_and_replay_inputs_with_one_error(tmp_path: Path) -> None:

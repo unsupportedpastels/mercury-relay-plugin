@@ -124,8 +124,14 @@ def test_pairing_offer_lifecycle_returns_capability_exactly_once(
         assert offer["capability"] not in redacted.text
 
         assert client.get(f"{PREFIX}/pairing-offers/unknown-offer", headers=AUTH).status_code == 404
+        # A second request supersedes the active offer instead of failing:
+        # the surface that showed the first QR may be gone and the capability
+        # cannot be re-shown.
         second = client.post(f"{PREFIX}/pairing-offers", headers=AUTH, content="{}")
-        assert second.status_code == 409
+        assert second.status_code == 200
+        assert second.json()["offer_id"] != offer["offer_id"]
+        superseded = client.get(f"{PREFIX}/pairing-offers/{offer['offer_id']}", headers=AUTH)
+        assert superseded.status_code == 404
         bad_body = client.post(
             f"{PREFIX}/pairing-offers", headers=AUTH, content=json.dumps({"surprise": 1})
         )
