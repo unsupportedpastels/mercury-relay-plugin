@@ -1,8 +1,11 @@
 name: mercury-relay
-version: 0.2.2
+version: 0.2.3
 description: "Server-side E2EE Relay transport for Mercury mobile clients."
 kind: backend
-manifest_version: 2
+# manifest_version 1 on purpose: Hermes loads v2 fields regardless of this
+# number, but its installer (hermes plugins install/update and the Desktop
+# installer) still rejects anything above 1.
+manifest_version: 1
 api_version: 1
 # cryptography ships with Hermes itself; the pinned pure-Python Noise runtime
 # is vendored under src/mercury_relay_plugin/_vendor/ so installation needs no
