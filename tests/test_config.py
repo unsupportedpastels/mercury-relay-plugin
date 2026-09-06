@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
 from mercury_relay_plugin.config import (  # noqa: E402
     CONFIG_FILE_NAME,
+    DEFAULT_RELAY_ORIGIN,
     STATE_DIR_NAME,
     STATE_FILE_NAME,
     ProfileConfigError,
@@ -229,3 +230,49 @@ def test_profile_paths_reject_symlinked_data_root(tmp_path):
     paths = profile_paths("default", explicit_path=link)
     with pytest.raises(ProfileConfigError):
         PublicConfigStore(paths).save({"schema_version": 1, "profile_id": "default"})
+
+
+def test_default_relay_origin_is_the_hosted_relay_and_canonical():
+    from mercury_relay_plugin.config import canonicalize_relay_origin
+
+    # The baked-in default must itself pass the origin rules, or every fresh
+    # install would fail at connection time instead of dialing out.
+    assert canonicalize_relay_origin(DEFAULT_RELAY_ORIGIN) == DEFAULT_RELAY_ORIGIN
+    assert DEFAULT_RELAY_ORIGIN.startswith("https://")
+
+
+def test_fresh_install_uses_default_relay_origin_without_writing_a_file(tmp_path):
+    data_root = tmp_path / "hermes"
+    data_root.mkdir()
+    paths = profile_paths("default", explicit_path=data_root)
+    store = PublicConfigStore(paths)
+
+    assert store.load()["relay_origin"] == DEFAULT_RELAY_ORIGIN
+    assert not paths.config_path.exists()
+
+
+def test_config_file_without_relay_origin_gets_default_at_load_only(tmp_path):
+    data_root = tmp_path / "hermes"
+    data_root.mkdir()
+    paths = profile_paths("default", explicit_path=data_root)
+    store = PublicConfigStore(paths)
+    store.save({"schema_version": 1, "profile_id": "default", "request_timeout_seconds": 20})
+
+    loaded = store.load()
+    assert loaded["relay_origin"] == DEFAULT_RELAY_ORIGIN
+    assert loaded["request_timeout_seconds"] == 20
+    # Applied at load time, never persisted: a later default reaches this file.
+    on_disk = json.loads(paths.config_path.read_text(encoding="utf-8"))
+    assert "relay_origin" not in on_disk
+
+
+def test_explicit_relay_origin_overrides_default(tmp_path):
+    data_root = tmp_path / "hermes"
+    data_root.mkdir()
+    paths = profile_paths("default", explicit_path=data_root)
+    store = PublicConfigStore(paths)
+    store.save(
+        {"schema_version": 1, "profile_id": "default", "relay_origin": "https://relay.example.net"}
+    )
+
+    assert store.load()["relay_origin"] == "https://relay.example.net"
