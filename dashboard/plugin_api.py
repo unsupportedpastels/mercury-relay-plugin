@@ -8,6 +8,7 @@ stable reason code without filesystem, database, or cryptographic detail.
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,6 +16,7 @@ from typing import Any
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request
 
+_PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 _PLUGIN_SRC = Path(__file__).resolve().parents[1] / "src"
 if str(_PLUGIN_SRC) not in sys.path:
     sys.path.insert(0, str(_PLUGIN_SRC))
@@ -22,7 +24,9 @@ if str(_PLUGIN_SRC) not in sys.path:
 # isort: off
 from mercury_relay_plugin.admission import DeviceAdmissionService  # noqa: E402
 from mercury_relay_plugin.authorization import AuthorizationRepository  # noqa: E402
+import mercury_relay_plugin  # noqa: E402
 from mercury_relay_plugin.config import load_public_config, profile_paths  # noqa: E402
+from mercury_relay_plugin.update_check import UpdateChecker  # noqa: E402
 from mercury_relay_plugin.connector import RelayConnectorService  # noqa: E402
 from mercury_relay_plugin.relay_client import CloudflareRelayConnector  # noqa: E402
 from mercury_relay_plugin.management import (  # noqa: E402
@@ -46,6 +50,23 @@ _management: ManagementService | None = None
 # ``start()``/``close()``, or None to run without a hosted connection.
 _connector_provider = None
 _connector = None
+_updates: UpdateChecker | None = None
+_update_task: asyncio.Task[None] | None = None
+
+
+def _build_update_checker(admission: DeviceAdmissionService | None) -> UpdateChecker:
+    paths = admission.repository.paths if admission is not None else profile_paths()
+    enabled = True
+    try:
+        enabled = bool(load_public_config(paths).get("update_check", True))
+    except Exception:
+        enabled = True
+    return UpdateChecker(
+        installed_version=mercury_relay_plugin.__version__,
+        plugin_dir=_PLUGIN_ROOT,
+        cache_path=paths.agent_dir / "update-check.json",
+        enabled=enabled,
+    )
 
 
 def _default_connector_provider(admission: DeviceAdmissionService):
@@ -87,6 +108,13 @@ async def _lifespan(_app: FastAPI):
         admission = None
     _admission = admission
     _management = ManagementService(admission) if admission is not None else None
+    global _updates, _update_task
+    try:
+        _updates = _build_update_checker(admission)
+        _update_task = asyncio.create_task(_updates.run_forever())
+    except Exception:
+        _updates = None
+        _update_task = None
     if admission is not None:
         provider = _connector_provider or _default_connector_provider
         try:
@@ -98,6 +126,10 @@ async def _lifespan(_app: FastAPI):
     try:
         yield
     finally:
+        task, _update_task = _update_task, None
+        if task is not None:
+            task.cancel()
+        _updates = None
         _management = None
         connector, _connector = _connector, None
         if connector is not None:
@@ -216,6 +248,32 @@ async def revoke_device(device_id: str) -> dict[str, Any]:
         return await management.revoke_device(device_id)
     except ManagementError as error:
         raise HTTPException(status_code=error.status_code, detail=error.reason) from None
+
+
+@router.get("/update")
+async def update_status() -> dict[str, Any]:
+    """Installed vs latest release; cached six hours, no code moves."""
+
+    if _updates is None:
+        raise HTTPException(status_code=503, detail="management_unavailable")
+    return _updates.snapshot()
+
+
+@router.post("/update/check")
+async def update_check_now() -> dict[str, Any]:
+    if _updates is None:
+        raise HTTPException(status_code=503, detail="management_unavailable")
+    return await _updates.check(force=True)
+
+
+@router.post("/update/apply")
+async def update_apply() -> dict[str, Any]:
+    """Run Hermes' own ``hermes plugins update mercury-relay``; the gateway
+    must be restarted afterwards to load the new code."""
+
+    if _updates is None:
+        raise HTTPException(status_code=503, detail="management_unavailable")
+    return await _updates.apply()
 
 
 @router.get("/diagnostics")

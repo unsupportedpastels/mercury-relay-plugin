@@ -92,6 +92,96 @@
     );
   }
 
+  function formatChecked(ts) {
+    if (!ts) return "never";
+    var age = Math.max(0, Math.floor(Date.now() / 1000 - ts));
+    if (age < 60) return "just now";
+    if (age < 3600) return Math.floor(age / 60) + " min ago";
+    return Math.floor(age / 3600) + " h ago";
+  }
+
+  /** Small pulsing pill in the dashboard header while an update is available. */
+  function UpdateBadge() {
+    var state = useState(null);
+    var update = state[0];
+    var setUpdate = state[1];
+    useEffect(
+      function () {
+        var cancelled = false;
+        function poll() {
+          authed("/update", {})
+            .then(function (u) { if (!cancelled) setUpdate(u); })
+            .catch(function () {});
+        }
+        poll();
+        var id = setInterval(poll, 60000);
+        return function () { cancelled = true; clearInterval(id); };
+      },
+      [],
+    );
+    if (!update || !update.available) return null;
+    return h(
+      "a",
+      {
+        className: "mr-update-badge",
+        href: "/mercury-relay",
+        title: "Mercury Relay " + update.latest + " is available (installed " + update.installed + ")",
+        onClick: function (e) {
+          e.preventDefault();
+          window.history.pushState({}, "", "/mercury-relay");
+          window.dispatchEvent(new PopStateEvent("popstate"));
+        },
+      },
+      h("span", { className: "mr-update-dot" }),
+      "Relay update " + update.latest,
+    );
+  }
+
+  function UpdatesCard(props) {
+    var u = props.update;
+    var busy = props.busy;
+    if (!u) return null;
+    var canApply = u.install && u.install.kind === "git";
+    return h(
+      "div",
+      { className: "mr-card" },
+      h("div", { className: "mr-row mr-spread" },
+        h("div", null,
+          h("h2", null, "Updates"),
+          h("div", { className: "mr-muted" },
+            "Installed " + u.installed +
+              (u.latest ? " · latest " + u.latest : "") +
+              " · checked " + formatChecked(u.checked_at) +
+              (u.enabled ? " · checks every 6 h" : " · automatic checks off") +
+              (u.error ? " · last check failed" : "")),
+          u.install && u.install.branch
+            ? h("div", { className: "mr-muted mr-mono" }, u.install.branch + " @ " + (u.install.commit || ""))
+            : null),
+        h("div", { className: "mr-row" },
+          h("button", { className: "mr-btn", onClick: props.onCheck, disabled: busy }, "Check now"),
+          u.available
+            ? h("button", { className: "mr-btn", onClick: props.onApply, disabled: busy || !canApply,
+                title: canApply ? "" : "This install is not a git checkout; update it the way it was installed." },
+                busy ? "Updating…" : "Update now")
+            : null)),
+      u.available
+        ? h("div", { className: "mr-banner" },
+            h("span", { className: "mr-update-dot" }),
+            "Mercury Relay " + u.latest + " is available. Update now runs " +
+              u.update_command + " through Hermes' plugin manager; restart the gateway afterwards.")
+        : null,
+      props.result
+        ? h("div", { className: props.result.ok ? "mr-banner" : "mr-banner mr-error" },
+            props.result.ok
+              ? "Updated. Restart the Hermes gateway to load the new version."
+              : "Update failed: " + (props.result.reason || "unknown") + ".",
+            props.result.output
+              ? h("pre", { className: "mr-output" }, props.result.output)
+              : null)
+        : null,
+    );
+  }
+
   function MercuryRelayPage() {
     var offerState = useState(null);
     var offer = offerState[0];
@@ -108,17 +198,45 @@
     var busyState = useState(false);
     var busy = busyState[0];
     var setBusy = busyState[1];
+    var updateState = useState(null);
+    var update = updateState[0];
+    var setUpdate = updateState[1];
+    var updateBusyState = useState(false);
+    var updateBusy = updateBusyState[0];
+    var setUpdateBusy = updateBusyState[1];
+    var updateResultState = useState(null);
+    var updateResult = updateResultState[0];
+    var setUpdateResult = updateResultState[1];
 
     var refresh = useCallback(function () {
-      Promise.all([authed("/devices", {}), authed("/diagnostics", {})])
+      Promise.all([authed("/devices", {}), authed("/diagnostics", {}), authed("/update", {})])
         .then(function (r) {
           setDevices((r[0] && r[0].devices) || []);
           setDiag(r[1]);
+          setUpdate(r[2]);
         })
         .catch(function (e) {
           setErr(e.message);
         });
     }, []);
+
+    function checkUpdates() {
+      setUpdateBusy(true);
+      authed("/update/check", jsonBody({}))
+        .then(setUpdate)
+        .catch(function (e) { setErr(e.message); })
+        .finally(function () { setUpdateBusy(false); });
+    }
+
+    function applyUpdate() {
+      if (!window.confirm("Update the Mercury Relay plugin on this host now? Hermes will pull the latest release; you will need to restart the gateway afterwards.")) return;
+      setUpdateBusy(true);
+      setUpdateResult(null);
+      authed("/update/apply", jsonBody({}))
+        .then(function (r) { setUpdateResult(r); refresh(); })
+        .catch(function (e) { setErr(e.message); })
+        .finally(function () { setUpdateBusy(false); });
+    }
 
     useEffect(
       function () {
@@ -314,6 +432,10 @@
             }),
       ),
 
+      // -- updates ----------------------------------------------------------
+      h(UpdatesCard, { update: update, busy: updateBusy, result: updateResult,
+        onCheck: checkUpdates, onApply: applyUpdate }),
+
       // -- status -----------------------------------------------------------
       diag
         ? h(
@@ -331,5 +453,10 @@
 
   if (window.__HERMES_PLUGINS__ && typeof window.__HERMES_PLUGINS__.register === "function") {
     window.__HERMES_PLUGINS__.register("mercury-relay", MercuryRelayPage);
+    if (typeof window.__HERMES_PLUGINS__.registerSlot === "function") {
+      // The sidebar tab has no badge API; the header slot is the closest
+      // always-visible spot for "an update is waiting".
+      window.__HERMES_PLUGINS__.registerSlot("header-right", "mercury-relay-update", UpdateBadge);
+    }
   }
 })();

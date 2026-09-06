@@ -100,7 +100,7 @@ def test_active_panel_state_is_scoped_by_connection() -> None:
 
     src = _source()
     # Query caches are keyed by the active connection.
-    assert src.count("queryKey: ['mercury-relay', props.connectionId || null,") == 2
+    assert src.count("queryKey: ['mercury-relay', props.connectionId || null,") == 3
     # The panel receives the active connection and is remounted (React key)
     # when it changes, clearing the local one-time QR offer and errors.
     assert "connectionId: activeConnectionId" in src

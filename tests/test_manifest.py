@@ -41,3 +41,12 @@ def test_vendored_qr_library_is_pure_python_segno() -> None:
     # client-side QR library shipped.
     segno_init = PLUGIN_ROOT / "src" / "mercury_relay_plugin" / "_vendor" / "segno" / "__init__.py"
     assert segno_init.is_file()
+
+
+def test_desktop_plugin_version_matches_the_manifest() -> None:
+    import re
+
+    source = (Path(__file__).resolve().parents[1] / "desktop" / "plugin.js").read_text()
+    match = re.search(r"DESKTOP_PLUGIN_VERSION = '([^']+)'", source)
+    assert match is not None
+    assert match.group(1) == mercury_relay_plugin.__version__

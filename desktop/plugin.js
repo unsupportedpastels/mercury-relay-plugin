@@ -26,6 +26,7 @@ import {
   PALETTE_AREA,
   ROUTES_AREA,
   SIDEBAR_NAV_AREA,
+  STATUSBAR_AREAS,
   useQuery,
   useValue,
 } from '@hermes/plugin-sdk'
@@ -45,6 +46,30 @@ function h(type, props) {
 }
 
 const API_BASE = '/api/plugins/mercury-relay'
+// Version of THIS desktop half. Kept in step with the plugin manifest by a
+// test; the gateway's plugin reports its own version over /update.
+const DESKTOP_PLUGIN_VERSION = '0.2.0'
+
+function versionTuple(text) {
+  const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(String(text || '').trim())
+  return m ? [Number(m[1]), Number(m[2]), Number(m[3])] : null
+}
+function versionLess(a, b) {
+  const x = versionTuple(a)
+  const y = versionTuple(b)
+  if (!x || !y) return false
+  for (let i = 0; i < 3; i++) {
+    if (x[i] !== y[i]) return x[i] < y[i]
+  }
+  return false
+}
+function formatChecked(ts) {
+  if (!ts) return 'never'
+  const age = Math.max(0, Math.floor(Date.now() / 1000 - ts))
+  if (age < 60) return 'just now'
+  if (age < 3600) return Math.floor(age / 60) + ' min ago'
+  return Math.floor(age / 3600) + ' h ago'
+}
 
 // A runtime plugin can't import a CSS file (blob import), so inject the small
 // layout stylesheet once. Colors lean on the app's theme variables with
@@ -66,6 +91,10 @@ function injectStyles() {
     '.mr-qr svg{width:200px;height:200px;display:block}',
     '.mr-fingerprint{font-family:ui-monospace,Menlo,monospace;font-size:16px;letter-spacing:1.5px;font-weight:600;word-break:break-all}',
     '.mr-name{font-size:15px;font-weight:600;margin-bottom:2px}',
+    '.mr-update-dot{width:8px;height:8px;border-radius:50%;background:#f2c64d;display:inline-block;margin-right:6px;animation:mr-pulse 1.4s ease-in-out infinite}',
+    '@keyframes mr-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}',
+    '.mr-output{margin:8px 0 0;max-height:160px;overflow:auto;font-size:11px;white-space:pre-wrap}',
+    '.mr-statusbar{display:inline-flex;align-items:center;gap:4px;cursor:pointer}',
     '.mr-mono{font-family:ui-monospace,Menlo,monospace;letter-spacing:0.5px}',
     '.mr-device{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--ui-border,rgba(128,128,128,.18))}',
     '.mr-pill{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--ui-border,rgba(128,128,128,.3))}',
@@ -223,10 +252,49 @@ function ActiveRelayPanel(props) {
     queryFn: () => props.rest('/devices'),
   })
 
+  const updateQ = useQuery({
+    queryKey: ['mercury-relay', props.connectionId || null, 'update'],
+    refetchInterval: 60000,
+    queryFn: () => props.rest('/update'),
+  })
+  const [updateBusy, setUpdateBusy] = useState(false)
+  const [updateResult, setUpdateResult] = useState(null)
+
   const refresh = useCallback(() => {
     status.refetch()
     devicesQ.refetch()
-  }, [status, devicesQ])
+    updateQ.refetch()
+  }, [status, devicesQ, updateQ])
+
+  const checkUpdates = useCallback(() => {
+    setUpdateBusy(true)
+    props
+      .rest('/update/check', { method: 'POST', body: {} })
+      .then(() => updateQ.refetch())
+      .catch((e) => setErr(e && e.message ? e.message : 'failed'))
+      .finally(() => setUpdateBusy(false))
+  }, [props, updateQ])
+
+  const applyUpdate = useCallback(() => {
+    if (
+      typeof window !== 'undefined' &&
+      !window.confirm(
+        "Update the Mercury Relay plugin on this gateway now? Hermes will pull the latest release; the gateway must be restarted afterwards.",
+      )
+    ) {
+      return
+    }
+    setUpdateBusy(true)
+    setUpdateResult(null)
+    props
+      .rest('/update/apply', { method: 'POST', body: {} })
+      .then((r) => {
+        setUpdateResult(r)
+        refresh()
+      })
+      .catch((e) => setErr(e && e.message ? e.message : 'failed'))
+      .finally(() => setUpdateBusy(false))
+  }, [props, refresh])
 
   const createOffer = useCallback(() => {
     setBusy(true)
@@ -361,6 +429,16 @@ function ActiveRelayPanel(props) {
                 h(Button, { variant: 'ghost', size: 'sm', onClick: () => act(d, 'deny') }, 'Deny')))))
       : null,
 
+    // updates: the gateway's plugin (this host, or the remote gateway the
+    // desktop is pointed at) plus this desktop half.
+    h(UpdatesCard, {
+      update: updateQ.data || null,
+      busy: updateBusy,
+      result: updateResult,
+      onCheck: checkUpdates,
+      onApply: applyUpdate,
+    }),
+
     // devices
     h('div', { className: 'mr-card' },
       h('h2', null, 'Devices'),
@@ -377,6 +455,69 @@ function ActiveRelayPanel(props) {
                 h(Button, { variant: 'ghost', size: 'sm', onClick: () => rename(d) }, 'Rename'),
                 h(Button, { variant: 'ghost', size: 'sm', onClick: () => act(d, 'revoke') }, 'Revoke'))))),
   )
+}
+
+function UpdatesCard(props) {
+  const u = props.update
+  if (!u) return null
+  const canApply = u.install && u.install.kind === 'git'
+  const desktopBehind = u.latest && versionLess(DESKTOP_PLUGIN_VERSION, u.latest)
+  return h('div', { className: 'mr-card' },
+    h('div', { className: 'mr-row mr-spread' },
+      h('div', null,
+        h('h2', null, 'Updates'),
+        h('div', { className: 'mr-muted' },
+          'Gateway plugin ' + u.installed +
+            (u.latest ? ' · latest ' + u.latest : '') +
+            ' · checked ' + formatChecked(u.checked_at) +
+            (u.enabled ? ' · checks every 6 h' : ' · automatic checks off') +
+            (u.error ? ' · last check failed' : '')),
+        h('div', { className: 'mr-muted' }, 'Desktop plugin ' + DESKTOP_PLUGIN_VERSION)),
+      h('div', { className: 'mr-row' },
+        h(Button, { size: 'sm', onClick: props.onCheck, disabled: props.busy }, 'Check now'),
+        u.available
+          ? h(Button, { size: 'sm', onClick: props.onApply, disabled: props.busy || !canApply },
+              props.busy ? 'Updating…' : 'Update gateway plugin')
+          : null)),
+    u.available
+      ? h('div', { className: 'mr-banner' },
+          h('span', { className: 'mr-update-dot' }),
+          'Mercury Relay ' + u.latest + ' is available on this gateway. Update runs ' +
+            u.update_command + ' there through Hermes\' plugin manager; restart that gateway afterwards.')
+      : null,
+    desktopBehind
+      ? h('div', { className: 'mr-banner' },
+          h('span', { className: 'mr-update-dot' }),
+          'This desktop plugin is ' + DESKTOP_PLUGIN_VERSION + '; ' + u.latest +
+            ' is available. Update it from Settings ▸ Plugins on this computer.')
+      : null,
+    props.result
+      ? h('div', { className: props.result.ok ? 'mr-banner' : 'mr-banner mr-error' },
+          props.result.ok
+            ? 'Updated. Restart that gateway to load the new version.'
+            : 'Update failed: ' + (props.result.reason || 'unknown') + '.',
+          props.result.output ? h('pre', { className: 'mr-output' }, props.result.output) : null)
+      : null,
+  )
+}
+
+/** Pulsing statusbar item while the active gateway (or this desktop half) is behind. */
+function UpdateStatusbarItem(props) {
+  const activeConnectionId = useValue(host.state.connectionId)
+  const updateQ = useQuery({
+    queryKey: ['mercury-relay', activeConnectionId || null, 'update'],
+    refetchInterval: 60000,
+    queryFn: () => props.rest('/update'),
+  })
+  const u = updateQ.data
+  if (!u) return null
+  const behind = u.available || (u.latest && versionLess(DESKTOP_PLUGIN_VERSION, u.latest))
+  if (!behind) return null
+  return h('span', {
+    className: 'mr-statusbar',
+    title: 'Mercury Relay ' + u.latest + ' is available',
+    onClick: () => host.navigate('/mercury-relay'),
+  }, h('span', { className: 'mr-update-dot' }), 'Relay update ' + u.latest)
 }
 
 function QrSvg(props) {
@@ -430,6 +571,14 @@ export default {
         area: SIDEBAR_NAV_AREA,
         order: 55,
         data: { codicon: 'broadcast', label: 'Mercury Relay', path: '/mercury-relay' },
+      },
+      {
+        id: 'update-badge',
+        area: STATUSBAR_AREAS.right,
+        data: {
+          id: 'mercury-relay.update',
+          render: () => h(UpdateStatusbarItem, { rest: rest }),
+        },
       },
       {
         id: 'open',
