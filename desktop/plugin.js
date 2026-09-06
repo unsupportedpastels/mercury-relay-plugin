@@ -48,7 +48,7 @@ function h(type, props) {
 const API_BASE = '/api/plugins/mercury-relay'
 // Version of THIS desktop half. Kept in step with the plugin manifest by a
 // test; the gateway's plugin reports its own version over /update.
-const DESKTOP_PLUGIN_VERSION = '0.2.10'
+const DESKTOP_PLUGIN_VERSION = '0.2.11'
 // The public repo both halves install from; the desktop bridge re-clones it.
 const PLUGIN_REPO = 'unsupportedpastels/mercury-relay-plugin'
 
@@ -142,10 +142,37 @@ async function probeGatewayStatus(connectionId, timeoutMs = 4000) {
   } catch (error) {
     const message = error && error.message ? String(error.message) : ''
     // A 404 means the gateway is reachable but the relay plugin isn't
-    // installed/enabled there — distinct from a real connection failure.
-    const notFound = /\b404\b/.test(message) || /no such api endpoint/i.test(message)
-    return { supported: true, error: message || 'unreachable', notFound: notFound }
+    // serving there — distinct from a real connection failure. The body
+    // says which of three states the gateway is in (see classify404).
+    const kind = classify404(message)
+    return { supported: true, error: message || 'unreachable', notFound: kind !== null, notFoundKind: kind }
   }
+}
+
+// Hermes answers a plugin route with two different 404 bodies, and the
+// bridge folds the body into the error message ("404: {...}"):
+//   {"detail":"Plugin not found"} — the per-request gate: mercury-relay is
+//     not in plugins.enabled (or is in plugins.disabled) for the home that
+//     backend reads. The install never completed with enable, or it was
+//     toggled off.
+//   {"detail":"Not Found"} — plain FastAPI: the name IS enabled but the
+//     router was never mounted, because plugin API routes mount once at
+//     web-server start. That process predates the install and needs a
+//     restart. For "This device" that process is Hermes Desktop's own
+//     `hermes serve` child, so `hermes gateway restart` does not touch it.
+// Returns 'not-enabled' | 'restart-needed' | 'not-installed' | null.
+function classify404(message) {
+  const text = String(message || '')
+  if (!(/\b404\b/.test(text) || /no such api endpoint/i.test(text))) return null
+  if (/plugin not found/i.test(text)) return 'not-enabled'
+  if (/"detail"\s*:\s*"Not Found"/.test(text)) return 'restart-needed'
+  return 'not-installed'
+}
+
+const NOT_FOUND_TEXT = {
+  'not-enabled': 'relay installed but not enabled here',
+  'restart-needed': 'relay installed, restart needed',
+  'not-installed': 'relay not installed here',
 }
 
 function statusOf(result) {
@@ -153,7 +180,7 @@ function statusOf(result) {
   // reach this box now); amber = reachable but relay not fully serving; red =
   // unreachable / auth needed; grey = couldn't determine.
   if (!result) return { color: 'grey', text: 'unknown' }
-  if (result.notFound) return { color: 'amber', text: 'relay not installed here' }
+  if (result.notFound) return { color: 'amber', text: NOT_FOUND_TEXT[result.notFoundKind] || NOT_FOUND_TEXT['not-installed'] }
   if (result.error) return { color: 'red', text: 'unreachable' }
   const s = result.status
   if (!s) return { color: 'grey', text: 'unknown' }
@@ -240,6 +267,43 @@ async function activateConnection(connectionId) {
       // re-polls and reflects reality either way.
     }
   }
+}
+
+// Shown in place of the Pair/Devices cards when the active gateway has no
+// serving relay backend. Reads the 404 body so the operator learns which of
+// the three states they are in instead of a generic "not available".
+function MissingBackendCard(props) {
+  const message = props.error && props.error.message ? String(props.error.message) : String(props.error || '')
+  const kind = classify404(message)
+  let title = 'Relay not available on this gateway'
+  let body =
+    'The active connection has no Mercury Relay backend. Switch to a gateway ' +
+    'where the relay plugin is installed and enabled, or install it there.'
+  if (kind === 'not-enabled') {
+    title = 'Relay plugin is installed here but not enabled'
+    body =
+      'This gateway has the plugin on disk but mercury-relay is not in plugins.enabled. ' +
+      'Run `hermes plugins enable mercury-relay` on that machine (with the same HERMES_HOME ' +
+      'the gateway uses), or toggle it on under Settings > Plugins, then restart the gateway.'
+  } else if (kind === 'restart-needed') {
+    title = 'Relay plugin is installed and enabled; restart needed'
+    body =
+      'Plugin routes load once when the gateway process starts, and this one started before ' +
+      'the install. For "This device", quit and reopen Hermes Desktop (its gateway is its ' +
+      'own child process; `hermes gateway restart` does not reach it). For a remote gateway, ' +
+      'run `hermes gateway restart` on that host.'
+  } else if (kind === 'not-installed') {
+    title = 'Relay plugin is not installed on this gateway'
+    body =
+      'Install it on that machine with `hermes plugins install unsupportedpastels/mercury-relay-plugin` ' +
+      '(git must be on PATH there), answer y to enable, then restart that gateway.'
+  }
+  return h(
+    'div',
+    { className: 'mr-card' },
+    h('h2', null, title),
+    h('div', { className: 'mr-muted' }, body),
+  )
 }
 
 // -- active-gateway relay panel ---------------------------------------------
@@ -423,14 +487,7 @@ function ActiveRelayPanel(props) {
   const authorized = devices.filter((d) => d.status === 'authorized')
 
   if (backendMissing) {
-    return h(
-      'div',
-      { className: 'mr-card' },
-      h('h2', null, 'Relay not available on this gateway'),
-      h('div', { className: 'mr-muted' },
-        'The active connection has no Mercury Relay backend. Switch to a gateway ' +
-          'where the relay plugin is installed and enabled, or install it there.'),
-    )
+    return h(MissingBackendCard, { error: status.error })
   }
 
   return h(

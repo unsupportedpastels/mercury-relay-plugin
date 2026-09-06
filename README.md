@@ -82,8 +82,10 @@ source tree.
 ## Install
 
 Requirements: a macOS, Linux, or Windows host running Hermes Agent with the
-web dashboard, Python 3.11 to 3.13. The `cryptography` package ships with
-Hermes. The Noise implementation and the QR generator are vendored under
+web dashboard, Python 3.11 to 3.13, and `git` on `PATH` (Hermes clones this
+repository with git and does not bundle it; options 1 and 2 below fail with
+`git is not installed or not in PATH` without it). The `cryptography` package
+ships with Hermes. The Noise implementation and the QR generator are vendored under
 `src/mercury_relay_plugin/_vendor/` so there is no pip step on the host.
 
 On POSIX hosts the plugin keeps its keys and state in `0600` files inside a
@@ -108,7 +110,10 @@ points at.
 That page opens Hermes Desktop with a confirmation dialog. Nothing is installed
 until you confirm. Hermes detects both halves of this repository and installs
 the gateway half on whichever gateway is active in Hermes Desktop, local or
-remote, and the desktop half on the computer you clicked from. If Hermes
+remote, and the desktop half on the computer you clicked from. Leave both
+checkboxes and the Enable switch on, and read the dialog before closing it:
+the two halves install independently, so a failed gateway half shows a red
+error in the dialog while the desktop half still reports success. If Hermes
 Desktop is not installed on that computer, the page falls back to the command
 below.
 
@@ -144,7 +149,21 @@ plugins:
     - mercury-relay
 ```
 
-Whichever option you used, restart the gateway (`hermes gateway restart`).
+Whichever option you used, restart the gateway process, because plugin API
+routes load once at startup. For a gateway you run yourself that is
+`hermes gateway restart`. For the **"This device"** gateway inside Hermes
+Desktop, quit and reopen Hermes Desktop: that gateway is a child process the
+app runs itself, and `hermes gateway restart` does not reach it.
+
+If the relay page still shows a 404 afterwards, the body tells you which
+state the gateway is in. `{"detail":"Plugin not found"}` means `mercury-relay`
+is not in `plugins.enabled` for the home that gateway reads; run
+`hermes plugins enable mercury-relay` there with the same `HERMES_HOME` and
+restart again. `{"detail":"Not Found"}` means it is enabled but the process
+has not been restarted since the install. The desktop tab's roster shows the
+same distinction as "installed but not enabled", "installed, restart needed",
+or "not installed".
+
 The dashboard gains a **Mercury Relay** tab where you create a
 one-time pairing QR, compare the fingerprint the phone shows, and approve or
 revoke devices. If the phone's camera cannot read the QR (some cameras zoom in
@@ -220,7 +239,8 @@ plugin's public config to turn the timer off; "Check now" still works.
 "Update now" never replaces code itself. It runs Hermes' own
 `hermes plugins update mercury-relay`, so Hermes' install validation and
 supply-chain scan apply, and it only works for git checkouts that are not
-pinned. Restart the gateway afterwards to load the new version. From Hermes
+pinned. Restart the gateway afterwards to load the new version (quit and
+reopen Hermes Desktop when the gateway is its "This device" one). From Hermes
 Desktop the card shows both halves: "Update gateway plugin" updates the active
 gateway's plugin (local or remote), and "Update desktop plugin" asks Hermes
 Desktop to re-download this plugin and reload it in place on that computer.

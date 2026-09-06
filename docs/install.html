@@ -34,8 +34,32 @@
 <a class="btn" id="open" href="hermes://plugin/install?repo=unsupportedpastels/mercury-relay-plugin&amp;enable=1">Open in Hermes Desktop</a>
 <p class="muted">Hermes shows a confirmation dialog before anything is installed. It detects
 both halves of this plugin (the gateway half and the Hermes Desktop half) and installs the
-gateway half on whichever gateway is active in Hermes Desktop, local or remote.
-Restart that gateway afterwards.</p>
+gateway half on whichever gateway is active in Hermes Desktop, local or remote.</p>
+
+<h2>Before you click Install in the dialog</h2>
+<ul>
+  <li><strong>git must be on PATH</strong> on the machine that runs the gateway. Hermes clones
+  this repository with git and does not bundle it. Without git the gateway half fails with
+  <code>git is not installed or not in PATH</code> while the desktop half still installs.</li>
+  <li>Leave both checkboxes and the <em>Enable</em> switch on. The dialog can install the
+  desktop half alone, which gives you the relay page but no relay.</li>
+  <li>Read the dialog before closing it. If the gateway half fails, the error is shown in red
+  inside the dialog while a green "Desktop plugin installed" toast still appears.</li>
+</ul>
+
+<h2>Then restart the right process</h2>
+<p>Plugin routes load when the gateway process starts, so the install is not live until
+that process restarts:</p>
+<ul>
+  <li><strong>"This device"</strong> in Hermes Desktop is a gateway process the app runs
+  itself. Quit and reopen Hermes Desktop. <code>hermes gateway restart</code> does not
+  reach it.</li>
+  <li><strong>A remote gateway</strong>: run <code>hermes gateway restart</code> on that host.</li>
+</ul>
+<p>Once restarted, the relay page's roster light turns from "not installed here" to
+"operational". If it still says "installed but not enabled", run
+<code>hermes plugins enable mercury-relay</code> on the gateway machine, with the same
+<code>HERMES_HOME</code> the gateway uses, and restart again.</p>
 
 <h2>Nothing happened?</h2>
 <p>Hermes Desktop is not installed on this computer, or the browser blocked the link.
@@ -43,7 +67,8 @@ Install from the Hermes command line instead. This works the same on macOS, Linu
 Windows and targets the machine you run it on:</p>
 <pre><code>hermes plugins install unsupportedpastels/mercury-relay-plugin</code></pre>
 <p>Answer <code>y</code> when asked to enable the plugin, then restart the gateway with
-<code>hermes gateway restart</code>.</p>
+<code>hermes gateway restart</code>. If that gateway is the "This device" one in Hermes
+Desktop, quit and reopen Hermes Desktop instead. git must be on PATH for this command too.</p>
 
 <h2>Manual clone</h2>
 <p>Clone into <code>plugins/mercury-relay</code> under your Hermes home
