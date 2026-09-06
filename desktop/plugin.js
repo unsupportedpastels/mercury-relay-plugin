@@ -48,7 +48,7 @@ function h(type, props) {
 const API_BASE = '/api/plugins/mercury-relay'
 // Version of THIS desktop half. Kept in step with the plugin manifest by a
 // test; the gateway's plugin reports its own version over /update.
-const DESKTOP_PLUGIN_VERSION = '0.2.3'
+const DESKTOP_PLUGIN_VERSION = '0.2.4'
 // The public repo both halves install from; the desktop bridge re-clones it.
 const PLUGIN_REPO = 'unsupportedpastels/mercury-relay-plugin'
 
@@ -97,6 +97,7 @@ function injectStyles() {
     '@keyframes mr-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.35;transform:scale(.8)}}',
     '.mr-output{margin:8px 0 0;max-height:160px;overflow:auto;font-size:11px;white-space:pre-wrap}',
     '.mr-statusbar{display:inline-flex;align-items:center;gap:4px;cursor:pointer}',
+    '.mr-stack{display:flex;flex-direction:column;gap:18px}',
     '.mr-mono{font-family:ui-monospace,Menlo,monospace;letter-spacing:0.5px}',
     '.mr-device{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--ui-border,rgba(128,128,128,.18))}',
     '.mr-pill{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--ui-border,rgba(128,128,128,.3))}',
@@ -412,7 +413,7 @@ function ActiveRelayPanel(props) {
 
   return h(
     'div',
-    null,
+    { className: 'mr-stack' },
     err ? h('div', { className: 'mr-banner mr-error' }, 'Error: ' + err) : null,
     s && s.relay_origin_configured === false
       ? h('div', { className: 'mr-banner' },
@@ -460,19 +461,6 @@ function ActiveRelayPanel(props) {
                 h(Button, { variant: 'ghost', size: 'sm', onClick: () => act(d, 'deny') }, 'Deny')))))
       : null,
 
-    // updates: the gateway's plugin (this host, or the remote gateway the
-    // desktop is pointed at) plus this desktop half.
-    h(UpdatesCard, {
-      update: updateQ.data || null,
-      busy: updateBusy,
-      result: updateResult,
-      onCheck: checkUpdates,
-      onApply: applyUpdate,
-      desktopBusy: desktopBusy,
-      desktopResult: desktopResult,
-      onUpdateDesktop: updateDesktop,
-    }),
-
     // devices
     h('div', { className: 'mr-card' },
       h('h2', null, 'Devices'),
@@ -488,6 +476,19 @@ function ActiveRelayPanel(props) {
               h('div', { className: 'mr-row' },
                 h(Button, { variant: 'ghost', size: 'sm', onClick: () => rename(d) }, 'Rename'),
                 h(Button, { variant: 'ghost', size: 'sm', onClick: () => act(d, 'revoke') }, 'Revoke'))))),
+
+    // updates last: the gateway's plugin (this host, or the remote gateway the
+    // desktop is pointed at) plus this desktop half.
+    h(UpdatesCard, {
+      update: updateQ.data || null,
+      busy: updateBusy,
+      result: updateResult,
+      onCheck: checkUpdates,
+      onApply: applyUpdate,
+      desktopBusy: desktopBusy,
+      desktopResult: desktopResult,
+      onUpdateDesktop: updateDesktop,
+    }),
   )
 }
 

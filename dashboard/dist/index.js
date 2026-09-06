@@ -432,10 +432,6 @@
             }),
       ),
 
-      // -- updates ----------------------------------------------------------
-      h(UpdatesCard, { update: update, busy: updateBusy, result: updateResult,
-        onCheck: checkUpdates, onApply: applyUpdate }),
-
       // -- status -----------------------------------------------------------
       diag
         ? h(
@@ -448,6 +444,10 @@
                 " · relay origin: " + (relayConfigured ? "configured" : "not set")),
           )
         : null,
+
+      // -- updates (last) ---------------------------------------------------
+      h(UpdatesCard, { update: update, busy: updateBusy, result: updateResult,
+        onCheck: checkUpdates, onApply: applyUpdate }),
     );
   }
 
