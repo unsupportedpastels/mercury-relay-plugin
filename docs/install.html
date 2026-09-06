@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Install the Mercury Relay plugin in Hermes</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    margin: 0; padding: 2.5rem 1.25rem; max-width: 42rem; margin-inline: auto;
+    font: 16px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  h1 { font-size: 1.5rem; margin: 0 0 .5rem; }
+  p { margin: .6rem 0; }
+  .muted { opacity: .75; }
+  .btn {
+    display: inline-block; margin: .75rem 0 1.5rem; padding: .7rem 1.1rem;
+    border-radius: .5rem; background: #2563eb; color: #fff; text-decoration: none;
+    font-weight: 600;
+  }
+  h2 { font-size: 1.05rem; margin: 1.75rem 0 .4rem; }
+  pre {
+    padding: .8rem 1rem; border-radius: .5rem; overflow-x: auto;
+    background: rgba(127,127,127,.15); font-size: .9rem;
+  }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  small { display: block; margin-top: 2rem; }
+</style>
+</head>
+<body>
+<h1>Install the Mercury Relay plugin</h1>
+<p id="status">Opening Hermes Desktop…</p>
+<a class="btn" id="open" href="hermes://plugin/install?repo=unsupportedpastels/mercury-relay-plugin&amp;enable=1">Open in Hermes Desktop</a>
+<p class="muted">Hermes shows a confirmation dialog before anything is installed. It detects
+both halves of this plugin (the gateway half and the Hermes Desktop half) and installs the
+gateway half on whichever gateway is active in Hermes Desktop, local or remote.
+Restart that gateway afterwards.</p>
+
+<h2>Nothing happened?</h2>
+<p>Hermes Desktop is not installed on this computer, or the browser blocked the link.
+Install from the Hermes command line instead. This works the same on macOS, Linux, and
+Windows and targets the machine you run it on:</p>
+<pre><code>hermes plugins install unsupportedpastels/mercury-relay-plugin</code></pre>
+<p>Answer <code>y</code> when asked to enable the plugin, then restart the gateway with
+<code>hermes gateway restart</code>.</p>
+
+<h2>Manual clone</h2>
+<p>Clone into <code>plugins/mercury-relay</code> under your Hermes home
+(<code>~/.hermes</code> on macOS and Linux, <code>%LOCALAPPDATA%\hermes</code> on Windows,
+or wherever <code>HERMES_HOME</code> points), then add <code>mercury-relay</code> to
+<code>plugins.enabled</code> in <code>config.yaml</code>. Full instructions are in the
+<a href="https://github.com/unsupportedpastels/mercury-relay-plugin#install">README</a>.</p>
+
+<small class="muted">Source: <a href="https://github.com/unsupportedpastels/mercury-relay-plugin">github.com/unsupportedpastels/mercury-relay-plugin</a> (MIT).</small>
+
+<script>
+  (function () {
+    var link = document.getElementById('open').href;
+    var status = document.getElementById('status');
+    try { window.location.replace(link); } catch (e) {}
+    setTimeout(function () {
+      status.textContent = 'If Hermes Desktop did not open, use one of the options below.';
+    }, 2500);
+  })();
+</script>
+</body>
+</html>

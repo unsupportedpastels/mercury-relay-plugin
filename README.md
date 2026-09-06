@@ -95,9 +95,34 @@ under `%LOCALAPPDATA%` for ownership isolation. The encrypted image-read
 extension is advertised on POSIX hosts only. See
 `src/mercury_relay_plugin/secure_fs.py` for the exact split.
 
-Clone the repository into the `plugins/mercury-relay` folder under your Hermes
-home. The default home is `~/.hermes` on macOS and Linux and
-`%LOCALAPPDATA%\hermes` on Windows, or whatever `HERMES_HOME` points at.
+Pick whichever of these fits. All three end with the same thing on disk: a
+git checkout at `plugins/mercury-relay` under your Hermes home, listed under
+`plugins.enabled` in `config.yaml`. The default home is `~/.hermes` on macOS
+and Linux and `%LOCALAPPDATA%\hermes` on Windows, or whatever `HERMES_HOME`
+points at.
+
+**Option 1: one click from Hermes Desktop.**
+
+[**Install in Hermes**](https://unsupportedpastels.github.io/mercury-relay-plugin/install.html)
+
+That page opens Hermes Desktop with a confirmation dialog. Nothing is installed
+until you confirm. Hermes detects both halves of this repository and installs
+the gateway half on whichever gateway is active in Hermes Desktop, local or
+remote, and the desktop half on the computer you clicked from. If Hermes
+Desktop is not installed on that computer, the page falls back to the command
+below.
+
+**Option 2: one command, any platform.** Run this on the machine that runs the
+Hermes gateway. It is the same on macOS, Linux, and Windows:
+
+```bash
+hermes plugins install unsupportedpastels/mercury-relay-plugin
+```
+
+Answer `y` when asked to enable the plugin. Hermes runs its install validation
+and supply-chain scan on the checkout before enabling it.
+
+**Option 3: clone it yourself.**
 
 macOS and Linux:
 
@@ -119,7 +144,8 @@ plugins:
     - mercury-relay
 ```
 
-Restart Hermes. The dashboard gains a **Mercury Relay** tab where you create a
+Whichever option you used, restart the gateway (`hermes gateway restart`).
+The dashboard gains a **Mercury Relay** tab where you create a
 one-time pairing QR, compare the fingerprint the phone shows, and approve or
 revoke devices.
 
@@ -143,7 +169,8 @@ Hermes Desktop only loads plugins from the machine it runs on, so:
   desktop half automatically at `plugins/mercury-relay/desktop/plugin.js`.
   Turn it on under **Settings > Plugins**; it ships off by default.
 - If Hermes Desktop runs on another machine (a Windows laptop talking to a
-  Linux host, for example), install the repository there too through
+  Linux host, for example), install the repository there too: click the
+  **Install in Hermes** link above from that laptop, or use
   **Settings > Plugins > Install** with the repository URL. The installer
   detects both halves and sets up the desktop one; the server half is inert
   on a machine that is not running Hermes.
