@@ -95,8 +95,8 @@ def test_policy_rejects_identity_claims() -> None:
 
 
 def test_rejections_expose_only_stable_reason_codes() -> None:
-    secret = "sensitive-payload-value"
+    sensitive = "sensitive payload value"
     with pytest.raises(MethodPolicyRejected) as caught:
-        MethodPolicy(profile="default").validate_text(secret)
+        MethodPolicy(profile="default").validate_text(sensitive)
     assert caught.value.reason == "invalid_json"
-    assert secret not in str(caught.value)
+    assert sensitive not in str(caught.value)

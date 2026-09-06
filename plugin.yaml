@@ -1,5 +1,5 @@
 name: mercury-relay
-version: 0.2.0
+version: 0.2.1
 description: "Server-side E2EE Relay transport for Mercury mobile clients."
 kind: backend
 manifest_version: 2

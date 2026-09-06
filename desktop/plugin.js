@@ -48,7 +48,7 @@ function h(type, props) {
 const API_BASE = '/api/plugins/mercury-relay'
 // Version of THIS desktop half. Kept in step with the plugin manifest by a
 // test; the gateway's plugin reports its own version over /update.
-const DESKTOP_PLUGIN_VERSION = '0.2.0'
+const DESKTOP_PLUGIN_VERSION = '0.2.1'
 
 function versionTuple(text) {
   const m = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(String(text || '').trim())
