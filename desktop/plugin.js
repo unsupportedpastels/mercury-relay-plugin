@@ -48,7 +48,7 @@ function h(type, props) {
 const API_BASE = '/api/plugins/mercury-relay'
 // Version of THIS desktop half. Kept in step with the plugin manifest by a
 // test; the gateway's plugin reports its own version over /update.
-const DESKTOP_PLUGIN_VERSION = '0.2.11'
+const DESKTOP_PLUGIN_VERSION = '0.2.12'
 // The public repo both halves install from; the desktop bridge re-clones it.
 const PLUGIN_REPO = 'unsupportedpastels/mercury-relay-plugin'
 
@@ -185,6 +185,9 @@ function statusOf(result) {
   const s = result.status
   if (!s) return { color: 'grey', text: 'unknown' }
   if (s.runtime === 'ready' && s.relay_connected) return { color: 'green', text: 'operational' }
+  if (s.runtime === 'ready' && s.relay_origin_configured && s.relay_refusal === 'unauthorized') {
+    return { color: 'amber', text: 'awaiting relay access' }
+  }
   if (s.runtime === 'ready' && s.relay_origin_configured) return { color: 'amber', text: 'host offline' }
   if (s.runtime === 'ready') return { color: 'amber', text: 'no relay origin' }
   return { color: 'amber', text: 'runtime not ready' }
@@ -500,9 +503,19 @@ function ActiveRelayPanel(props) {
             'cannot connect until the hosted relay origin is set.')
       : null,
 
+    // The relay answered the last upgrade with 401/403: reachable, but this
+    // machine is not on its allowlist yet. Say so instead of "host offline".
+    s && s.relay_refusal === 'unauthorized' && !s.relay_connected
+      ? h('div', { className: 'mr-banner' },
+          'The relay is reachable but refused this gateway: its machine ID is not ' +
+            'allowlisted yet. Send the ID below to the relay operator; the connection ' +
+            'is admitted within about a minute of being added.')
+      : null,
+
     // relay access: the machine ID is a hash over this gateway's relay route
     // and its routing issuer public key. Not a secret; it admits only this
     // gateway once the relay operator allowlists it in the operations console.
+    // The last character is a check so a misread ID is rejected on paste.
     s && s.relay_machine_id
       ? h('div', { className: 'mr-card' },
           h('div', { className: 'mr-row mr-spread' },
@@ -510,7 +523,8 @@ function ActiveRelayPanel(props) {
               h('h2', null, 'Relay access'),
               h('div', { className: 'mr-muted' },
                 'Send this machine ID to the relay operator to allow this gateway to ' +
-                  'connect to the hosted relay.'),
+                  'connect to the hosted relay. Use Copy: the ID has no 0, 1, 8 or 9, and ' +
+                  'its last character is a check that catches a misread letter.'),
               h('div', { className: 'mr-fingerprint', style: { marginTop: '8px' } },
                 s.relay_machine_id)),
             h(Button, {

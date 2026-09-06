@@ -190,12 +190,16 @@ port, nothing else. Leave the field out to use the hosted relay.
 
 The hosted relay only routes for installations the relay operator has
 allowlisted. The tab's **Relay access** card shows this installation's
-**Relay machine ID** (`MR-XXXX-XXXX-XXXX-XXXX-XXXX-XXXX`). Send it to the
-operator. It is a hash over this installation's relay route and its routing
-issuer public key: not a secret, useless for any other installation, and it
-changes only if the plugin's private state is wiped (in which case send the
-new one). Once it is allowlisted, the outbound relay connection is admitted
-within about a minute.
+**Relay machine ID** (`MR-XXXXX-XXXXX-XXXXX-XXXXX-XXXXX`). Send it to the
+operator, using the **Copy** button rather than retyping it. It is a hash over
+this installation's relay route and its routing issuer public key: not a
+secret, useless for any other installation, and it changes only if the
+plugin's private state is wiped (in which case send the new one). The
+alphabet is letters plus the digits 2 to 7, so it never contains 0, 1, 8 or 9,
+and the last character is a check: the operations console rejects an ID with
+a misread character instead of adding one that admits nothing. Once it is
+allowlisted, the outbound relay connection is admitted within about a minute.
+Until then the roster light reads "awaiting relay access".
 
 ### Hermes Desktop
 
@@ -204,7 +208,10 @@ Hermes Desktop only loads plugins from the machine it runs on, so:
 
 - If Hermes Desktop runs on the host you just installed on, it finds the
   desktop half automatically at `plugins/mercury-relay/desktop/plugin.js`.
-  Turn it on under **Settings > Plugins**; it ships off by default.
+  It ships off by default. Quit and reopen Hermes Desktop first (the restart
+  step above), then turn it on under **Settings > Plugins**: a half switched
+  on before that restart shows its sidebar entry but a blank page until the
+  app restarts.
 - If Hermes Desktop runs on another machine (a Windows laptop talking to a
   Linux host, for example), install the repository there too: click the
   **Install in Hermes** link above from that laptop, or use

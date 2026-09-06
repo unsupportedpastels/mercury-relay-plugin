@@ -26,7 +26,7 @@ from collections.abc import Callable
 from typing import Any
 
 from .config import ProfileConfigError, canonicalize_relay_origin
-from .connection_journal import ConnectionJournal, exception_category
+from .connection_journal import ConnectionJournal, exception_category, upgrade_refused_status
 from .connector import ConnectorClosed
 from .identity import _b64url_encode
 from .secure_channel import MAX_CIPHERTEXT_RECORD_BYTES
@@ -208,6 +208,10 @@ class CloudflareRelayConnector:
 
     # -- connector protocol (used by RelayConnectorService) ------------------
 
+    #: ``"unauthorized"`` after the relay refused the last upgrade with
+    #: 401/403 (this machine is not allowlisted); ``None`` otherwise.
+    last_refusal: str | None = None
+
     @property
     def connected(self) -> bool:
         """True while the outbound host socket is live (phone-reachable)."""
@@ -258,6 +262,12 @@ class CloudflareRelayConnector:
             except asyncio.CancelledError:
                 raise
             except Exception as error:
+                # A 401/403 on the upgrade means the relay refused this
+                # machine (not allowlisted); the UI shows that instead of a
+                # generic "host offline". Any other failure clears it.
+                self.last_refusal = (
+                    "unauthorized" if upgrade_refused_status(error) in (401, 403) else None
+                )
                 self._journal_call(
                     "reconnect_result",
                     attempt_id=attempt_id,
@@ -275,6 +285,7 @@ class CloudflareRelayConnector:
                 backoff = min(backoff * 2, self._max_backoff)
                 continue
             self._socket = socket
+            self.last_refusal = None
             self._host_generation = self._last_protocol_generation
             self._journal_call(
                 "reconnect_result",

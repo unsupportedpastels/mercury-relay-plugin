@@ -76,6 +76,12 @@ JTI_BYTES = 16
 ISSUER_FIELD = "routing_issuer"
 MACHINE_ID_DOMAIN = "mercury-relay-machine-id/v1"
 MACHINE_ID_BYTES = 15
+# The displayed form appends one check character so a mistyped or misread ID
+# is rejected at paste time instead of silently admitting nothing. The
+# canonical 24-character form (no check) is what the Worker derives and what
+# the allowlist stores; the check is a transcription aid only.
+MACHINE_ID_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+MACHINE_ID_CHECK_MODULUS = 31
 PUBLIC_KEY_B64URL_CHARS = 43
 _HEADER_JSON = '{"alg":"EdDSA","typ":"mrt1"}'
 _HEADER_B64 = _b64url_encode(_HEADER_JSON.encode("ascii"))
@@ -101,6 +107,29 @@ def machine_id(installation_id: bytes, public_key: bytes) -> str:
     digest = hashlib.sha256(f"{MACHINE_ID_DOMAIN}{route}{pk}".encode("ascii")).digest()
     raw = base64.b32encode(digest[:MACHINE_ID_BYTES]).decode("ascii").rstrip("=")
     return "MR-" + "-".join(raw[i : i + 4] for i in range(0, len(raw), 4))
+
+
+def machine_id_check_char(body: str) -> str:
+    """Check character for the 24-character canonical body.
+
+    Position-weighted sum modulo the prime 31: every single-character
+    substitution and every adjacent transposition changes the result (the one
+    blind spot is A<->7 at a single position, a difference of 31). Modulo 31
+    means the check is never ``7``.
+    """
+
+    if len(body) != 24 or any(c not in MACHINE_ID_ALPHABET for c in body):
+        raise RoutingTokenError("invalid_machine_id")
+    total = sum((i + 1) * MACHINE_ID_ALPHABET.index(c) for i, c in enumerate(body))
+    return MACHINE_ID_ALPHABET[total % MACHINE_ID_CHECK_MODULUS]
+
+
+def machine_id_display(installation_id: bytes, public_key: bytes) -> str:
+    """The owner-facing form: canonical body plus check, in five groups of five."""
+
+    body = machine_id(installation_id, public_key)[3:].replace("-", "")
+    checked = body + machine_id_check_char(body)
+    return "MR-" + "-".join(checked[i : i + 5] for i in range(0, 25, 5))
 
 
 class RoutingTokenError(RuntimeError):
@@ -145,6 +174,11 @@ class RoutingTokenIssuer:
         """The allowlist ID the owner gives the relay operator for this install."""
 
         return machine_id(installation_id, self._public)
+
+    def machine_id_display(self, installation_id: bytes) -> str:
+        """``machine_id`` with the check character, as shown to the owner."""
+
+        return machine_id_display(installation_id, self._public)
 
     def mint(self, *, role: str, installation_id: bytes, ttl_seconds: int) -> str:
         if role not in ROLES:
@@ -325,6 +359,8 @@ __all__ = [
     "AUTHORIZED_DEVICE_TOKEN_TTL_SECONDS",
     "HOST_TOKEN_TTL_SECONDS",
     "ISSUER_FIELD",
+    "MACHINE_ID_ALPHABET",
+    "MACHINE_ID_CHECK_MODULUS",
     "MACHINE_ID_DOMAIN",
     "ROLE_AUTHORIZED_DEVICE",
     "ROLE_HOST",
@@ -335,5 +371,7 @@ __all__ = [
     "RoutingTokenIssuer",
     "TOKEN_AUDIENCE",
     "machine_id",
+    "machine_id_check_char",
+    "machine_id_display",
     "verify_routing_token",
 ]

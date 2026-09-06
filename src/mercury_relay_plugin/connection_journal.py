@@ -85,6 +85,7 @@ _REASONS = frozenset(
 _EXCEPTION_CATEGORIES = frozenset(
     {
         "timeout",
+        "unauthorized",
         "connection",
         "protocol",
         "admission",
@@ -119,11 +120,28 @@ _ID_RE = re.compile(r"^[0-9a-f]{16}$")
 _TIMESTAMP_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 
 
+def upgrade_refused_status(error: BaseException | None) -> int | None:
+    """HTTP status of a refused WebSocket upgrade, from the exception's typed
+    attributes only (``websockets`` spells it ``status_code`` or
+    ``response.status_code`` across releases); never from its text."""
+
+    if error is None:
+        return None
+    status = getattr(error, "status_code", None)
+    if status is None:
+        status = getattr(getattr(error, "response", None), "status_code", None)
+    if isinstance(status, bool) or not isinstance(status, int):
+        return None
+    return status if 100 <= status <= 599 else None
+
+
 def exception_category(error: BaseException | None) -> str | None:
     """Return a closed exception category without inspecting exception text."""
 
     if error is None:
         return None
+    if upgrade_refused_status(error) in (401, 403):
+        return "unauthorized"
     if isinstance(error, (TimeoutError,)):  # asyncio.TimeoutError aliases this.
         return "timeout"
     if isinstance(error, ConnectionError):

@@ -180,3 +180,12 @@ def test_install_docs_name_the_right_restart_and_git(name: str) -> None:
     assert "quit and reopen hermes desktop" in text.lower()
     assert "hermes gateway restart" in text
     assert "git" in text and "PATH" in text
+
+
+def test_roster_names_the_unallowlisted_state() -> None:
+    src = _source()
+    # A 401/403 on the upgrade is "awaiting relay access", not "host offline",
+    # and the panel tells the operator to send the machine ID.
+    assert "relay_refusal === 'unauthorized'" in src
+    assert "awaiting relay access" in src
+    assert "allowlisted yet" in src

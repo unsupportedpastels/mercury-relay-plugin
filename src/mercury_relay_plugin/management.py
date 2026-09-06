@@ -150,7 +150,7 @@ class ManagementService:
 
         try:
             identity = self.repository.identity_store.load_or_create()
-            return self._routing_issuer().machine_id(identity.installation_id)
+            return self._routing_issuer().machine_id_display(identity.installation_id)
         except Exception:
             return None
 

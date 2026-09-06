@@ -163,3 +163,25 @@ def test_host_disconnect_keeps_generation_and_numeric_close_code_only(tmp_path: 
     disconnect = [event for event in events if event["event"] == "disconnect"][-1]
     assert disconnect["close_code"] == 1006
     assert "reason_text" not in json.dumps(events)
+
+
+def test_refused_upgrade_is_categorised_without_reading_text() -> None:
+    from mercury_relay_plugin.connection_journal import exception_category, upgrade_refused_status
+
+    class Response:
+        status_code = 401
+
+    class NewStyle(Exception):
+        response = Response()
+
+    class OldStyle(Exception):
+        status_code = 403
+
+    class Other(Exception):
+        status_code = 500
+
+    assert upgrade_refused_status(NewStyle("secret token in text")) == 401
+    assert exception_category(NewStyle("x")) == "unauthorized"
+    assert exception_category(OldStyle("x")) == "unauthorized"
+    assert exception_category(Other("x")) == "other"
+    assert exception_category(RuntimeError("x")) == "other"

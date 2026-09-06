@@ -193,6 +193,11 @@ async def status() -> dict[str, Any]:
     snapshot = _runtime.snapshot()
     snapshot["relay_origin_configured"] = _relay_origin_configured()
     snapshot["relay_connected"] = bool(_connector is not None and _connector.connected)
+    # "unauthorized" when the relay refused the last upgrade (401/403): this
+    # machine is not allowlisted yet. The desktop half turns that into
+    # "awaiting relay access" rather than a generic "host offline".
+    refusal = getattr(_connector, "last_refusal", None) if _connector is not None else None
+    snapshot["relay_refusal"] = refusal if isinstance(refusal, str) else None
     # The machine ID the owner gives the relay operator to be allowlisted.
     snapshot["relay_machine_id"] = (
         _management.relay_machine_id() if _management is not None else None
