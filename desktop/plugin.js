@@ -48,7 +48,7 @@ function h(type, props) {
 const API_BASE = '/api/plugins/mercury-relay'
 // Version of THIS desktop half. Kept in step with the plugin manifest by a
 // test; the gateway's plugin reports its own version over /update.
-const DESKTOP_PLUGIN_VERSION = '0.2.5'
+const DESKTOP_PLUGIN_VERSION = '0.2.6'
 // The public repo both halves install from; the desktop bridge re-clones it.
 const PLUGIN_REPO = 'unsupportedpastels/mercury-relay-plugin'
 
@@ -78,9 +78,15 @@ function formatChecked(ts) {
 // neutral fallbacks so it tracks light/dark.
 const STYLE_ID = 'mercury-relay-plugin-styles'
 function injectStyles() {
-  if (typeof document === 'undefined' || document.getElementById(STYLE_ID)) return
-  const style = document.createElement('style')
-  style.id = STYLE_ID
+  if (typeof document === 'undefined') return
+  // Replace, never skip: a hot-reloaded plugin.js must not keep running
+  // against the previous version's stylesheet.
+  let style = document.getElementById(STYLE_ID)
+  if (!style) {
+    style = document.createElement('style')
+    style.id = STYLE_ID
+    document.head.appendChild(style)
+  }
   style.textContent = [
     '.mr-page{max-width:880px;margin:0 auto;padding:24px;display:flex;flex-direction:column;gap:18px}',
     '.mr-card{border:1px solid var(--ui-border,rgba(128,128,128,.25));border-radius:12px;padding:18px;display:flex;flex-direction:column;gap:8px}',
@@ -110,7 +116,6 @@ function injectStyles() {
     '.mr-banner{border-radius:8px;padding:10px 14px;font-size:12.5px;border:1px solid var(--ui-border,rgba(128,128,128,.3))}',
     '.mr-banner.mr-error{border-color:#7a2f2b;color:#e08a85}',
   ].join('')
-  document.head.appendChild(style)
 }
 
 // -- backend access ----------------------------------------------------------
@@ -424,7 +429,7 @@ function ActiveRelayPanel(props) {
 
   return h(
     'div',
-    { className: 'mr-stack' },
+    { className: 'mr-stack', style: { display: 'flex', flexDirection: 'column', gap: '18px' } },
     err ? h('div', { className: 'mr-banner mr-error' }, 'Error: ' + err) : null,
     s && s.relay_origin_configured === false
       ? h('div', { className: 'mr-banner' },
