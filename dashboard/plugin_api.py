@@ -196,6 +196,13 @@ async def approve_device(device_id: str, request: Request) -> dict[str, Any]:
     return _managed(lambda: management.approve_device(device_id, body))
 
 
+@router.post("/devices/{device_id}/label")
+async def label_device(device_id: str, request: Request) -> dict[str, Any]:
+    management = _require_management()
+    body = await _bounded_json_body(request)
+    return _managed(lambda: management.label_device(device_id, body))
+
+
 @router.post("/devices/{device_id}/deny")
 async def deny_device(device_id: str) -> dict[str, Any]:
     management = _require_management()

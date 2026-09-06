@@ -42,8 +42,11 @@ try:
 except ImportError:
     HIDDEN_DISPLAY_KINDS = frozenset()
 _HIDDEN_TRANSCRIPT_KINDS = HIDDEN_DISPLAY_KINDS | {
-    "hidden", "internal_notification", "delegation_closeout",
-    "delegation_closeout_provisional", "delegation_waiting",
+    "hidden",
+    "internal_notification",
+    "delegation_closeout",
+    "delegation_closeout_provisional",
+    "delegation_waiting",
 }
 
 
@@ -223,7 +226,9 @@ class SessionReads:
         ):
             raise SessionReadsError("invalid_params")
         limit = _require_int(
-            params.get("limit"), minimum=1, maximum=MAX_TRANSCRIPT_LIMIT,
+            params.get("limit"),
+            minimum=1,
+            maximum=MAX_TRANSCRIPT_LIMIT,
             default=MAX_TRANSCRIPT_LIMIT,
         )
         offset = _require_int(params.get("offset"), minimum=0, maximum=MAX_OFFSET, default=0)
@@ -253,7 +258,8 @@ class SessionReads:
                 raise SessionReadsError("read_failed")
             raw_returned = len(messages)
             messages = [
-                message for message in messages
+                message
+                for message in messages
                 if message.get("display_kind") not in _HIDDEN_TRANSCRIPT_KINDS
             ]
             return {

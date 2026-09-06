@@ -48,16 +48,21 @@ def test_image_read_and_advertised_byte_bound(image_host):
     capability = status["capabilities"]["image_read"]
     assert capability["method"] == "relay.image.read"
     result = dispatch(reads, {"profile": "default", "path": str(path)})
-    assert result == {"mime_type": "image/png", "size": len(PNG),
-                      "base64": base64.b64encode(PNG).decode()}
+    assert result == {
+        "mime_type": "image/png",
+        "size": len(PNG),
+        "base64": base64.b64encode(PNG).decode(),
+    }
     cap = capability["max_bytes"]
     path.write_bytes(PNG + b"x" * (cap - len(PNG)))
     result = dispatch(reads, {"profile": "default", "path": str(path)})
     assert result["size"] == cap
-    response = json.dumps({"jsonrpc": "2.0", "id": "\x01" * 128, "result": result},
-                          separators=(",", ":")).encode()
+    response = json.dumps(
+        {"jsonrpc": "2.0", "id": "\x01" * 128, "result": result}, separators=(",", ":")
+    ).encode()
     from mercury_relay_plugin.framing import Reassembler, encode_message
     from mercury_relay_plugin.session_lease import LeaseLimits
+
     assert len(response) < LeaseLimits().max_event_bytes
     frames = encode_message(b"c" * 16, b"m" * 16, response)
     decoder = Reassembler(channel_id=b"c" * 16)
@@ -67,26 +72,29 @@ def test_image_read_and_advertised_byte_bound(image_host):
         dispatch(reads, {"profile": "default", "path": str(path)})
 
 
-@pytest.mark.parametrize("changes,reason", [
-    ({"profile": "../outside"}, "profile_not_available"),
-    ({"profile": "unauthorized"}, "profile_not_available"),
-    ({"profile": "deleted"}, "profile_not_available"),
-    ({"profile": None}, "profile_not_available"),
-    ({"profile": []}, "profile_not_available"),
-    ({"path": None}, "invalid_params"),
-    ({"path": []}, "invalid_params"),
-    ({"path": ""}, "invalid_params"),
-    ({"path": "relative.png"}, "invalid_params"),
-    ({"path": "/tmp/../image.png"}, "invalid_params"),
-    ({"path": "https://example.com/image.png"}, "invalid_params"),
-    ({"path": "file:///tmp/image.png"}, "invalid_params"),
-    ({"path": "//server/image.png"}, "invalid_params"),
-    ({"path": "/tmp/\x00image.png"}, "invalid_params"),
-    ({"path": "/tmp/\ud800.png"}, "invalid_params"),
-    ({"path": "/" + "x" * 4096}, "invalid_params"),
-    ({"max_bytes": 9999999}, "invalid_params"),
-    ({"auth_identity": "owner"}, "invalid_params"),
-])
+@pytest.mark.parametrize(
+    "changes,reason",
+    [
+        ({"profile": "../outside"}, "profile_not_available"),
+        ({"profile": "unauthorized"}, "profile_not_available"),
+        ({"profile": "deleted"}, "profile_not_available"),
+        ({"profile": None}, "profile_not_available"),
+        ({"profile": []}, "profile_not_available"),
+        ({"path": None}, "invalid_params"),
+        ({"path": []}, "invalid_params"),
+        ({"path": ""}, "invalid_params"),
+        ({"path": "relative.png"}, "invalid_params"),
+        ({"path": "/tmp/../image.png"}, "invalid_params"),
+        ({"path": "https://example.com/image.png"}, "invalid_params"),
+        ({"path": "file:///tmp/image.png"}, "invalid_params"),
+        ({"path": "//server/image.png"}, "invalid_params"),
+        ({"path": "/tmp/\x00image.png"}, "invalid_params"),
+        ({"path": "/tmp/\ud800.png"}, "invalid_params"),
+        ({"path": "/" + "x" * 4096}, "invalid_params"),
+        ({"max_bytes": 9999999}, "invalid_params"),
+        ({"auth_identity": "owner"}, "invalid_params"),
+    ],
+)
 def test_invalid_image_params(image_host, changes, reason):
     reads, path = image_host
     params = {"profile": "default", "path": str(path), **changes}
@@ -94,10 +102,21 @@ def test_invalid_image_params(image_host, changes, reason):
         dispatch(reads, params)
 
 
-@pytest.mark.parametrize("name", [
-    ".env.png", ".ENV.png", "mcp-tokens/image.png", "PAIRING/image.png",
-    "auth.json", "config.yaml", "bad.png", "image.svg", "directory.png", "pipe.png",
-])
+@pytest.mark.parametrize(
+    "name",
+    [
+        ".env.png",
+        ".ENV.png",
+        "mcp-tokens/image.png",
+        "PAIRING/image.png",
+        "auth.json",
+        "config.yaml",
+        "bad.png",
+        "image.svg",
+        "directory.png",
+        "pipe.png",
+    ],
+)
 def test_sensitive_nonimage_and_nonregular_paths(image_host, name):
     import os
 
@@ -184,7 +203,8 @@ def test_encrypted_image_read_and_current_device_authorization(image_host, tmp_p
 
         def channels(payload=b""):
             mobile = NoiseChannel.initiator(
-                static_private_key=key, installation_id=offer.installation_id,
+                static_private_key=key,
+                installation_id=offer.installation_id,
                 remote_static_public_key=offer.host_public_key,
             )
             host = service.new_host_channel()
@@ -211,10 +231,15 @@ def test_encrypted_image_read_and_current_device_authorization(image_host, tmp_p
             return json.loads(result)
 
         async def send(params, request_id="img-1"):
-            request = {"jsonrpc": "2.0", "id": request_id, "method": "relay.image.read",
-                       "params": params}
-            for frame in encode_message(channel_id, secrets.token_bytes(16),
-                                        json.dumps(request).encode()):
+            request = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "method": "relay.image.read",
+                "params": params,
+            }
+            for frame in encode_message(
+                channel_id, secrets.token_bytes(16), json.dumps(request).encode()
+            ):
                 await transport.feed_ciphertext(mobile.encrypt(frame))
             return await receive()
 
@@ -256,11 +281,21 @@ def test_encrypted_image_read_and_current_device_authorization(image_host, tmp_p
     asyncio.run(exercise())
 
 
-@pytest.mark.parametrize("fields", [
-    {"id": None}, {"id": True}, {"id": ""}, {"id": "x" * 129},
-    {"id": 2**63}, {"id": -(2**63) - 1}, {"id": "\ud800"},
-    {"jsonrpc": "1.0"}, {"extra": "no"}, {"params": []},
-])
+@pytest.mark.parametrize(
+    "fields",
+    [
+        {"id": None},
+        {"id": True},
+        {"id": ""},
+        {"id": "x" * 129},
+        {"id": 2**63},
+        {"id": -(2**63) - 1},
+        {"id": "\ud800"},
+        {"jsonrpc": "1.0"},
+        {"extra": "no"},
+        {"params": []},
+    ],
+)
 def test_image_request_envelope_is_bounded_before_dispatch(fields):
     from mercury_relay_plugin.session_lease import SessionLease, SessionLeaseError
     from mercury_relay_plugin.virtual_ws import VirtualWebSocket
@@ -277,12 +312,23 @@ def test_image_request_envelope_is_bounded_before_dispatch(fields):
 
         ws = VirtualWebSocket()
         await ws.accept()
-        lease = SessionLease(device_id="d", profile="default", controller_id="c", websocket=ws,
-                             close_controller=close, read_dispatcher=read)
+        lease = SessionLease(
+            device_id="d",
+            profile="default",
+            controller_id="c",
+            websocket=ws,
+            close_controller=close,
+            read_dispatcher=read,
+        )
         lease.start()
         attachment = lease.attach(0)
-        request = {"jsonrpc": "2.0", "id": "i", "method": "relay.image.read", "params": {},
-                   **fields}
+        request = {
+            "jsonrpc": "2.0",
+            "id": "i",
+            "method": "relay.image.read",
+            "params": {},
+            **fields,
+        }
         with pytest.raises(SessionLeaseError, match="^invalid_read_request$"):
             await attachment.feed_text(json.dumps(request))
         assert called == []
@@ -297,12 +343,15 @@ def test_required_image_params(image_host, params):
         dispatch(image_host[0], params)
 
 
-@pytest.mark.parametrize("suffix,data,mime", [
-    (".jpeg", b"\xff\xd8\xff" + b"fixture", "image/jpeg"),
-    (".gif", b"GIF89a" + b"fixture", "image/gif"),
-    (".webp", b"RIFF1234WEBPfixture", "image/webp"),
-    (".bmp", b"BMfixture", "image/bmp"),
-])
+@pytest.mark.parametrize(
+    "suffix,data,mime",
+    [
+        (".jpeg", b"\xff\xd8\xff" + b"fixture", "image/jpeg"),
+        (".gif", b"GIF89a" + b"fixture", "image/gif"),
+        (".webp", b"RIFF1234WEBPfixture", "image/webp"),
+        (".bmp", b"BMfixture", "image/bmp"),
+    ],
+)
 def test_advertised_raster_types_require_matching_signature(image_host, suffix, data, mime):
     reads, path = image_host
     target = path.with_suffix(suffix)

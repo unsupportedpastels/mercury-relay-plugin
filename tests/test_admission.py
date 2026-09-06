@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import json
 import secrets
@@ -806,3 +807,73 @@ def test_channel_envelope_validation(tmp_path: Path) -> None:
     asyncio.run(
         rejects(b'{"channel":7,"device_id":"DEVICE","profile":"default","type":"controller.open"}')
     )
+
+
+def test_device_names_itself_in_the_admission_envelope_even_while_pending(tmp_path: Path) -> None:
+    """The approval probe carries the phone's name, so the dashboard shows it before approval."""
+
+    async def exercise() -> None:
+        root = tmp_path / "hermes"
+        root.mkdir()
+        repository = AuthorizationRepository(profile_paths(explicit_path=root))
+        runtime = _runtime()
+        await runtime.start()
+        service = DeviceAdmissionService(repository, runtime, profile="default")
+        offer = repository.create_offer()
+        mobile_private = secrets.token_bytes(32)
+        pairing_mobile = NoiseChannel.initiator(
+            static_private_key=mobile_private,
+            installation_id=offer.installation_id,
+            remote_static_public_key=offer.host_public_key,
+        )
+        pairing_host = service.new_host_channel()
+        capability = _handshake(pairing_mobile, pairing_host, final_payload=offer.capability)
+        pending = service.complete_pairing(pairing_host, capability)
+
+        async def probe(name: str | None, key: bytes = mobile_private):
+            mobile = NoiseChannel.initiator(
+                static_private_key=key,
+                installation_id=offer.installation_id,
+                remote_static_public_key=offer.host_public_key,
+            )
+            host = service.new_host_channel()
+            _handshake(mobile, host, final_payload=b"")
+            envelope = controller_auth_payload(
+                device_id=pending.device_id, profile="default", device_name=name
+            )
+            with contextlib.suppress(AdmissionRejected):
+                await service.open_controller(host, mobile.encrypt(envelope))
+
+        # Pending: admission is refused, but the self-reported name is kept.
+        await probe("Mark's Fold")
+        listed = {d.device_id: d for d in repository.list_devices()}
+        assert listed[pending.device_id].device_name == "Mark's Fold"
+        assert listed[pending.device_id].display_name == "Mark's Fold"
+        assert listed[pending.device_id].status == "pending"
+
+        # A stranger with the right device id but the wrong key cannot rename it.
+        await probe("Attacker", key=secrets.token_bytes(32))
+        assert {d.device_id: d for d in repository.list_devices()}[
+            pending.device_id
+        ].device_name == "Mark's Fold"
+
+        # Owner nickname wins over the reported name; clearing it falls back.
+        repository.set_label(pending.device_id, "  Kitchen  phone ")
+        summary = {d.device_id: d for d in repository.list_devices()}[pending.device_id]
+        assert summary.label == "Kitchen phone" and summary.display_name == "Kitchen phone"
+        repository.set_label(pending.device_id, "")
+        assert {d.device_id: d for d in repository.list_devices()}[
+            pending.device_id
+        ].display_name == "Mark's Fold"
+
+        # Control characters and empty names are ignored, not stored.
+        await probe("bad\x01name")
+        await probe("   ")
+        assert {d.device_id: d for d in repository.list_devices()}[
+            pending.device_id
+        ].device_name == "Mark's Fold"
+
+        await service.close()
+        await runtime.close()
+
+    asyncio.run(exercise())

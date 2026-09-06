@@ -20,9 +20,7 @@ def test_plugin_manifest_is_opt_in_backend() -> None:
 
 
 def test_dashboard_manifest_mounts_backend_api_and_management_ui() -> None:
-    manifest = json.loads(
-        (PLUGIN_ROOT / "dashboard" / "manifest.json").read_text(encoding="utf-8")
-    )
+    manifest = json.loads((PLUGIN_ROOT / "dashboard" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["name"] == "mercury-relay"
     assert manifest["api"] == "plugin_api.py"
     # The management page is a dashboard tab served from the plugin's own

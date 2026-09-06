@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 import json
 import re
+from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
 
 from .authorization import (
+    MAX_DEVICE_NAME_CHARS,
     AuthorizationError,
     AuthorizationRepository,
     DeviceSummary,
@@ -68,6 +69,7 @@ def controller_auth_payload(
     resume_cursor: int | None = None,
     recovery_version: int | None = None,
     channel: str | None = None,
+    device_name: str | None = None,
 ) -> bytes:
     if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
         raise ValueError("invalid device identifier")
@@ -79,6 +81,10 @@ def controller_auth_payload(
     }
     if channel is not None:
         envelope["channel"] = validate_channel(channel)
+    if device_name is not None:
+        if not isinstance(device_name, str) or not 1 <= len(device_name) <= MAX_DEVICE_NAME_CHARS:
+            raise ValueError("invalid device name")
+        envelope["device_name"] = device_name
     if resume_cursor is not None:
         if (
             isinstance(resume_cursor, bool)
@@ -101,7 +107,7 @@ def controller_auth_payload(
 
 def _parse_controller_auth(
     plaintext: bytes,
-) -> tuple[str, str, int | None, int | None, str]:
+) -> tuple[str, str, int | None, int | None, str, str | None]:
     if len(plaintext) > MAX_AUTH_ENVELOPE_BYTES:
         raise AdmissionRejected("invalid_auth_envelope")
     try:
@@ -111,7 +117,7 @@ def _parse_controller_auth(
     required = {"type", "device_id", "profile"}
     if not isinstance(value, dict) or not required <= set(value):
         raise AdmissionRejected("invalid_auth_envelope")
-    if set(value) - required - {"resume_cursor", "recovery_version", "channel"}:
+    if set(value) - required - {"resume_cursor", "recovery_version", "channel", "device_name"}:
         raise AdmissionRejected("invalid_auth_envelope")
     if value["type"] != AUTH_ENVELOPE_TYPE:
         raise AdmissionRejected("invalid_auth_envelope")
@@ -144,7 +150,13 @@ def _parse_controller_auth(
             raise AdmissionRejected("invalid_auth_envelope") from None
         if channel == DEFAULT_CHANNEL:
             raise AdmissionRejected("invalid_auth_envelope")
-    return device_id, profile, resume_cursor, recovery_version, channel
+    device_name: str | None = None
+    if "device_name" in value:
+        raw_name = value["device_name"]
+        if not isinstance(raw_name, str) or len(raw_name) > 4 * MAX_DEVICE_NAME_CHARS:
+            raise AdmissionRejected("invalid_auth_envelope")
+        device_name = raw_name
+    return device_id, profile, resume_cursor, recovery_version, channel, device_name
 
 
 @dataclass(frozen=True, slots=True)
@@ -295,9 +307,18 @@ class DeviceAdmissionService:
         self._require_unclaimed_host_channel(channel)
         try:
             plaintext = channel.decrypt(encrypted_auth_envelope)
-            device_id, profile, resume_cursor, recovery_version, lease_channel = (
+            device_id, profile, resume_cursor, recovery_version, lease_channel, device_name = (
                 _parse_controller_auth(plaintext)
             )
+            if device_name is not None:
+                # The phone names itself on every open, including the approval
+                # probes a pending device sends, so the dashboard can show the
+                # name before approval. Bound to the record whose key signed
+                # this channel; never blocks admission.
+                with suppress(Exception):
+                    self.repository.note_device_name(
+                        device_id, channel.remote_static_public, device_name
+                    )
             # Authorization (device status, capability, epoch) is re-proven on
             # every fresh channel, including lease reattach after a detach.
             if not self.repository.is_authorized(device_id, channel.remote_static_public):

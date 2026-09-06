@@ -116,9 +116,7 @@ def test_pairing_connection_delivers_encrypted_device_id_ack(tmp_path: Path) -> 
         assert await device.receive() is None
 
         # The acked device_id is exactly what approval and admission key on.
-        repository.approve(
-            ack["device_id"], hashlib.sha256(mobile.channel_binding).digest()
-        )
+        repository.approve(ack["device_id"], hashlib.sha256(mobile.channel_binding).digest())
         assert repository.list_devices()[0].status == "authorized"
 
         await service.close()

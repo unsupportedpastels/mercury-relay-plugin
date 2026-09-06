@@ -12,8 +12,12 @@ from .session_reads import SessionReadsError
 MAX_IMAGE_BYTES = 2 * 1024 * 1024
 MAX_PATH_BYTES = 4096
 MIME_TYPES = {
-    ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
-    ".gif": "image/gif", ".webp": "image/webp", ".bmp": "image/bmp",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+    ".bmp": "image/bmp",
 }
 
 
@@ -27,11 +31,21 @@ def _host_helpers():
             _managed_files_policy,
             _path_is_under,
         )
-        if (os.open not in os.supports_dir_fd or not hasattr(os, "O_NOFOLLOW")
-                or not hasattr(os, "O_DIRECTORY")):
+
+        if (
+            os.open not in os.supports_dir_fd
+            or not hasattr(os, "O_NOFOLLOW")
+            or not hasattr(os, "O_DIRECTORY")
+        ):
             raise RuntimeError
-        helpers = (get_profile_dir, _chat_image_extension, _is_sensitive_path,
-                   _canonical_path, _managed_files_policy, _path_is_under)
+        helpers = (
+            get_profile_dir,
+            _chat_image_extension,
+            _is_sensitive_path,
+            _canonical_path,
+            _managed_files_policy,
+            _path_is_under,
+        )
         if not all(callable(helper) for helper in helpers):
             raise RuntimeError
         return helpers
@@ -47,14 +61,20 @@ def capability() -> dict | None:
         helpers[4](None, create_root=False)
     except Exception:
         return None
-    return {"method": "relay.image.read", "max_bytes": MAX_IMAGE_BYTES,
-            "mime_types": list(dict.fromkeys(MIME_TYPES.values()))}
+    return {
+        "method": "relay.image.read",
+        "max_bytes": MAX_IMAGE_BYTES,
+        "mime_types": list(dict.fromkeys(MIME_TYPES.values())),
+    }
 
 
 def validate_path(raw: object) -> Path:
     try:
-        valid = (isinstance(raw, str) and 1 <= len(raw.encode("utf-8")) <= MAX_PATH_BYTES
-                 and not any(ord(c) < 32 or ord(c) == 127 for c in raw))
+        valid = (
+            isinstance(raw, str)
+            and 1 <= len(raw.encode("utf-8")) <= MAX_PATH_BYTES
+            and not any(ord(c) < 32 or ord(c) == 127 for c in raw)
+        )
     except UnicodeError:
         valid = False
     if not valid or not isinstance(raw, str):
@@ -71,12 +91,10 @@ def _read_regular(target: Path) -> bytes:
     directory = os.open(target.anchor, os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in target.parts[1:-1]:
-            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
-                            dir_fd=directory)
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
             os.close(directory)
             directory = child
-        fd = os.open(target.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK,
-                     dir_fd=directory)
+        fd = os.open(target.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=directory)
         with os.fdopen(fd, "rb") as handle:
             info = os.fstat(handle.fileno())
             if not stat.S_ISREG(info.st_mode):
@@ -114,8 +132,11 @@ def read_image(profile: str, path: Path) -> dict:
         data = _read_regular(target)
         if MIME_TYPES.get(sniff(data)) != mime:
             raise SessionReadsError("image_not_available")
-        return {"mime_type": mime, "size": len(data),
-                "base64": base64.b64encode(data).decode("ascii")}
+        return {
+            "mime_type": mime,
+            "size": len(data),
+            "base64": base64.b64encode(data).decode("ascii"),
+        }
     except SessionReadsError:
         raise
     except Exception:

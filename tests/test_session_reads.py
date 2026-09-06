@@ -128,7 +128,9 @@ def test_reads_match_retained_fixture_envelopes_and_close_every_handle() -> None
 
 @pytest.mark.parametrize("order", ["oldest", "latest"])
 def test_transcript_filters_stored_internal_kinds_without_losing_page_positions(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, order: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    order: str,
 ) -> None:
     SessionDB = contract_import("hermes_state").SessionDB
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
@@ -138,18 +140,27 @@ def test_transcript_filters_stored_internal_kinds_without_losing_page_positions(
     # rows. Identical control-looking text from a real user must survive.
     text = "[Internal notification] delegation_closeout: wait for delegates"
     kinds = [
-        "internal_notification", "delegation_closeout", None,
-        "delegation_waiting", "delegation_closeout_provisional", None,
-        "hidden", "internal_notification",
+        "internal_notification",
+        "delegation_closeout",
+        None,
+        "delegation_waiting",
+        "delegation_closeout_provisional",
+        None,
+        "hidden",
+        "internal_notification",
     ]
     try:
         db.create_session("fixture-controls", source="mercury")
         for kind in kinds:
             db.append_message(
-                "fixture-controls", "user", content=text, display_kind=kind,
+                "fixture-controls",
+                "user",
+                content=text,
+                display_kind=kind,
             )
-        expected = [m["id"] for m in db.get_messages("fixture-controls")
-                    if m.get("display_kind") is None]
+        expected = [
+            m["id"] for m in db.get_messages("fixture-controls") if m.get("display_kind") is None
+        ]
     finally:
         db.close()
 
@@ -159,10 +170,15 @@ def test_transcript_filters_stored_internal_kinds_without_losing_page_positions(
         visible_ids = []
         page_sizes = []
         for _ in range(5):
-            page = await reads.dispatch("relay.session.transcript", {
-                "session_id": "fixture-controls", "limit": 2,
-                "offset": offset, "order": order,
-            })
+            page = await reads.dispatch(
+                "relay.session.transcript",
+                {
+                    "session_id": "fixture-controls",
+                    "limit": 2,
+                    "offset": offset,
+                    "order": order,
+                },
+            )
             messages = page["messages"]
             assert all(m.get("display_kind") is None for m in messages)
             assert all(m["content"] == text for m in messages)

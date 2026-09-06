@@ -54,9 +54,7 @@ _EVENT_NAMES = frozenset(
         "host_generation_change",
     }
 )
-_OUTCOMES = frozenset(
-    {"unknown", "started", "success", "failed", "rejected", "timeout", "closed"}
-)
+_OUTCOMES = frozenset({"unknown", "started", "success", "failed", "rejected", "timeout", "closed"})
 _REASONS = frozenset(
     {
         "unknown",
@@ -198,12 +196,8 @@ def sanitize_connection_event(value: Mapping[str, Any]) -> dict[str, Any] | None
         "exception_category": safe_choice(value.get("exception_category"), _EXCEPTION_CATEGORIES),
         "backoff_ms": _bounded_int(value.get("backoff_ms"), maximum=MAX_EVENT_AGE_MS),
         "attempt_number": _bounded_int(value.get("attempt_number"), maximum=MAX_ATTEMPT_NUMBER),
-        "connection_age_ms": _bounded_int(
-            value.get("connection_age_ms"), maximum=MAX_EVENT_AGE_MS
-        ),
-        "last_send_age_ms": _bounded_int(
-            value.get("last_send_age_ms"), maximum=MAX_EVENT_AGE_MS
-        ),
+        "connection_age_ms": _bounded_int(value.get("connection_age_ms"), maximum=MAX_EVENT_AGE_MS),
+        "last_send_age_ms": _bounded_int(value.get("last_send_age_ms"), maximum=MAX_EVENT_AGE_MS),
         "last_receive_age_ms": _bounded_int(
             value.get("last_receive_age_ms"), maximum=MAX_EVENT_AGE_MS
         ),
@@ -369,8 +363,9 @@ class ConnectionJournal:
             if normalized is None:
                 return
             line = (
-                json.dumps(normalized, ensure_ascii=True, allow_nan=False, separators=(",", ":"))
-                .encode("ascii")
+                json.dumps(
+                    normalized, ensure_ascii=True, allow_nan=False, separators=(",", ":")
+                ).encode("ascii")
                 + b"\n"
             )
             if len(line) > min(MAX_EVENT_BYTES, self.max_bytes):

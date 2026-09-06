@@ -73,9 +73,7 @@ def test_runtime_owns_and_closes_bounded_controllers() -> None:
 
         with pytest.raises(MethodPolicyRejected, match="method_not_allowed"):
             await first.websocket.feed_text(
-                json.dumps(
-                    {"jsonrpc": "2.0", "id": "x", "method": "config.get", "params": {}}
-                )
+                json.dumps({"jsonrpc": "2.0", "id": "x", "method": "config.get", "params": {}})
             )
 
         assert await runtime.close_controller("controller-a") is True

@@ -83,9 +83,7 @@ def test_vertical_slice_pairs_streams_survives_detach_and_revokes(
         module = _load_plugin_api()
         module._runtime = module.RelayRuntime(max_controllers=4)
         connector = InMemoryHostedConnector()
-        module._connector_provider = lambda admission: RelayConnectorService(
-            admission, connector
-        )
+        module._connector_provider = lambda admission: RelayConnectorService(admission, connector)
 
         submit_calls: list[str] = []
 
@@ -100,12 +98,8 @@ def test_vertical_slice_pairs_streams_survives_detach_and_revokes(
                 installation_id=base64.b64decode(offer["installation_id"]),
                 host_public_key=base64.b64decode(offer["host_public_key"]),
             )
-            await mobile.pair(
-                await connector.connect(), base64.b64decode(offer["capability"])
-            )
-            pending = await _wait_for(
-                lambda: management.pending_devices()["devices"]
-            )
+            await mobile.pair(await connector.connect(), base64.b64decode(offer["capability"]))
+            pending = await _wait_for(lambda: management.pending_devices()["devices"])
             device_id = pending[0]["device_id"]
             assert pending[0]["status"] == "pending"
             digest = hashlib.sha256(mobile.pairing_channel_binding).digest()
@@ -117,9 +111,7 @@ def test_vertical_slice_pairs_streams_survives_detach_and_revokes(
             mobile.device_id = device_id
 
             # -- real Hermes session over the encrypted path -----------------
-            session = await mobile.open_controller(
-                await connector.connect(), profile="researcher"
-            )
+            session = await mobile.open_controller(await connector.connect(), profile="researcher")
             ready = await session.next_matching(
                 lambda frame: frame.get("params", {}).get("type") == "gateway.ready"
             )
@@ -145,9 +137,7 @@ def test_vertical_slice_pairs_streams_survives_detach_and_revokes(
 
             def counted_submit(request_id, params):
                 submit_calls.append(params.get("submission_id", ""))
-                server._emit(
-                    "message.delta", params["session_id"], {"text": " streaming delta"}
-                )
+                server._emit("message.delta", params["session_id"], {"text": " streaming delta"})
                 return server._ok(request_id, {"accepted": True, "turn": 1})
 
             monkeypatch.setitem(server._methods, "prompt.submit", counted_submit)
@@ -179,9 +169,7 @@ def test_vertical_slice_pairs_streams_survives_detach_and_revokes(
             resumed = await mobile.open_controller(
                 await connector.connect(), profile="researcher", resume_cursor=3
             )
-            accepted = await resumed.next_matching(
-                lambda frame: frame.get("id") == "submit-1"
-            )
+            accepted = await resumed.next_matching(lambda frame: frame.get("id") == "submit-1")
             assert accepted["result"] == {"accepted": True, "turn": 1}
 
             # Retrying the same logical submission never reaches Hermes again.
@@ -214,9 +202,7 @@ def test_vertical_slice_pairs_streams_survives_detach_and_revokes(
             )
             listed = await resumed.next_matching(lambda frame: frame.get("id") == "read-1")
             assert listed["result"]["total"] >= 1
-            assert any(
-                row["id"] == "seeded-session-001" for row in listed["result"]["sessions"]
-            )
+            assert any(row["id"] == "seeded-session-001" for row in listed["result"]["sessions"])
             await resumed.send_json(
                 {
                     "jsonrpc": "2.0",
@@ -225,9 +211,7 @@ def test_vertical_slice_pairs_streams_survives_detach_and_revokes(
                     "params": {"profile": "researcher", "session_id": "seeded-session-001"},
                 }
             )
-            transcript = await resumed.next_matching(
-                lambda frame: frame.get("id") == "read-2"
-            )
+            transcript = await resumed.next_matching(lambda frame: frame.get("id") == "read-2")
             contents = [m.get("content") for m in transcript["result"]["messages"]]
             assert contents == ["seeded prompt", "seeded answer"]
 
@@ -237,9 +221,7 @@ def test_vertical_slice_pairs_streams_survives_detach_and_revokes(
             with pytest.raises((AssertionError, TimeoutError, ConnectionError)):
                 await resumed.next_matching(lambda frame: False, attempts=3)
 
-            rejected = await mobile.open_controller(
-                await connector.connect(), profile="researcher"
-            )
+            rejected = await mobile.open_controller(await connector.connect(), profile="researcher")
             with pytest.raises((AssertionError, TimeoutError, ConnectionError)):
                 await rejected.next_json()
 

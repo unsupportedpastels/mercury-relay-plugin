@@ -119,11 +119,7 @@ class RoutingTokenIssuer:
             raise RoutingTokenError("invalid_role")
         if not isinstance(installation_id, bytes) or len(installation_id) != 32:
             raise RoutingTokenError("invalid_installation_id")
-        if (
-            isinstance(ttl_seconds, bool)
-            or not isinstance(ttl_seconds, int)
-            or ttl_seconds < 1
-        ):
+        if isinstance(ttl_seconds, bool) or not isinstance(ttl_seconds, int) or ttl_seconds < 1:
             raise RoutingTokenError("invalid_ttl")
         now = int(self._clock())
         claims = {

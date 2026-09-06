@@ -65,6 +65,8 @@ function injectStyles() {
     '.mr-qr{background:#fff;padding:12px;border-radius:12px;line-height:0}',
     '.mr-qr svg{width:200px;height:200px;display:block}',
     '.mr-fingerprint{font-family:ui-monospace,Menlo,monospace;font-size:16px;letter-spacing:1.5px;font-weight:600;word-break:break-all}',
+    '.mr-name{font-size:15px;font-weight:600;margin-bottom:2px}',
+    '.mr-mono{font-family:ui-monospace,Menlo,monospace;letter-spacing:0.5px}',
     '.mr-device{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 0;border-top:1px solid var(--ui-border,rgba(128,128,128,.18))}',
     '.mr-pill{font-size:10.5px;text-transform:uppercase;letter-spacing:.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--ui-border,rgba(128,128,128,.3))}',
     '.mr-pill.mr-ok{color:#4ea56a;border-color:#2f6b45}',
@@ -258,6 +260,27 @@ function ActiveRelayPanel(props) {
     [props, refresh],
   )
 
+  const rename = useCallback(
+    (device) => {
+      if (typeof window === 'undefined') return
+      const next = window.prompt(
+        "Nickname for this device (leave empty to use the phone's own name):",
+        device.label || '',
+      )
+      if (next === null) return
+      props
+        .rest('/devices/' + encodeURIComponent(device.device_id) + '/label', {
+          method: 'POST',
+          body: { label: next.trim().slice(0, 64) },
+        })
+        .then(refresh)
+        .catch((e) => setErr(e && e.message ? e.message : 'failed'))
+    },
+    [props, refresh],
+  )
+
+  const deviceTitle = (d) => d.display_name || d.label || d.device_name || d.fingerprint
+
   const act = useCallback(
     (device, verb) => {
       props
@@ -330,6 +353,7 @@ function ActiveRelayPanel(props) {
           pending.map((d) =>
             h('div', { className: 'mr-device', key: d.device_id },
               h('div', null,
+                h('div', { className: 'mr-name' }, deviceTitle(d)),
                 h('div', { className: 'mr-fingerprint' }, d.fingerprint),
                 h('div', { className: 'mr-muted' }, 'pending')),
               h('div', { className: 'mr-row' },
@@ -345,9 +369,13 @@ function ActiveRelayPanel(props) {
         : authorized.map((d) =>
             h('div', { className: 'mr-device', key: d.device_id },
               h('div', null,
-                h('div', { className: 'mr-fingerprint' }, d.fingerprint),
+                h('div', { className: 'mr-name' }, deviceTitle(d)),
+                h('div', { className: 'mr-muted mr-mono' },
+                  (d.label && d.device_name && d.label !== d.device_name ? d.device_name + ' · ' : '') + d.fingerprint),
                 h('span', { className: 'mr-pill mr-ok' }, 'authorized')),
-              h(Button, { variant: 'ghost', size: 'sm', onClick: () => act(d, 'revoke') }, 'Revoke')))),
+              h('div', { className: 'mr-row' },
+                h(Button, { variant: 'ghost', size: 'sm', onClick: () => rename(d) }, 'Rename'),
+                h(Button, { variant: 'ghost', size: 'sm', onClick: () => act(d, 'revoke') }, 'Revoke'))))),
   )
 }
 

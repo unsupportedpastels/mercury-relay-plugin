@@ -144,6 +144,9 @@ def test_approve_requires_full_binding_then_authorizes_fixed_client(tmp_path: Pa
         "updated_at",
         "epoch",
         "capabilities",
+        "device_name",
+        "label",
+        "display_name",
     }
     assert "public_key" not in json.dumps(safe)
     assert "channel_binding" not in json.dumps(safe)

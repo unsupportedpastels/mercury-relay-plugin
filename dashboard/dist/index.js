@@ -167,6 +167,36 @@
         });
     }
 
+    function rename(device) {
+      var current = device.label || "";
+      var next = window.prompt(
+        "Nickname for this device (leave empty to use the phone's own name):",
+        current,
+      );
+      if (next === null) return;
+      authed(
+        "/devices/" + encodeURIComponent(device.device_id) + "/label",
+        jsonBody({ label: next.trim().slice(0, 64) }),
+      )
+        .then(refresh)
+        .catch(function (e) {
+          setErr(e.message);
+        });
+    }
+
+    function deviceTitle(device) {
+      return device.display_name || device.label || device.device_name || device.fingerprint;
+    }
+
+    function deviceSubtitle(device) {
+      var parts = [];
+      if (device.label && device.device_name && device.label !== device.device_name) {
+        parts.push(device.device_name);
+      }
+      parts.push(device.fingerprint);
+      return parts.join(" · ");
+    }
+
     function act(device, verb) {
       authed("/devices/" + encodeURIComponent(device.device_id) + "/" + verb, jsonBody({}))
         .then(refresh)
@@ -245,6 +275,7 @@
                 "div",
                 { className: "mr-device", key: d.device_id },
                 h("div", null,
+                  h("div", { className: "mr-name" }, deviceTitle(d)),
                   h("div", { className: "mr-fingerprint" }, d.fingerprint),
                   h("div", { className: "mr-muted" }, "pending")),
                 h("div", { className: "mr-row" },
@@ -270,11 +301,15 @@
                 "div",
                 { className: "mr-device", key: d.device_id },
                 h("div", null,
-                  h("div", { className: "mr-fingerprint" }, d.fingerprint),
+                  h("div", { className: "mr-name" }, deviceTitle(d)),
+                  h("div", { className: "mr-muted mr-mono" }, deviceSubtitle(d)),
                   h("span", { className: "mr-pill mr-ok" }, "authorized")),
-                h("button",
-                  { className: "mr-btn mr-danger", onClick: function () { act(d, "revoke"); } },
-                  "Revoke"),
+                h("div", { className: "mr-row" },
+                  h("button", { className: "mr-btn", onClick: function () { rename(d); } },
+                    "Rename"),
+                  h("button",
+                    { className: "mr-btn mr-danger", onClick: function () { act(d, "revoke"); } },
+                    "Revoke")),
               );
             }),
       ),
