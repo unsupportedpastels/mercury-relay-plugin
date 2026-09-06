@@ -48,7 +48,7 @@ function h(type, props) {
 const API_BASE = '/api/plugins/mercury-relay'
 // Version of THIS desktop half. Kept in step with the plugin manifest by a
 // test; the gateway's plugin reports its own version over /update.
-const DESKTOP_PLUGIN_VERSION = '0.2.7'
+const DESKTOP_PLUGIN_VERSION = '0.2.8'
 // The public repo both halves install from; the desktop bridge re-clones it.
 const PLUGIN_REPO = 'unsupportedpastels/mercury-relay-plugin'
 
@@ -246,6 +246,7 @@ function ActiveRelayPanel(props) {
   // changes, and the query keys carry the connection id so gateway A's
   // status/devices can never render while gateway B is active (BR-06).
   const [offer, setOffer] = useState(null)
+  const [copied, setCopied] = useState(null)
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
 
@@ -349,7 +350,7 @@ function ActiveRelayPanel(props) {
     setErr(null)
     props
       .rest('/pairing-offers', { method: 'POST', body: {} })
-      .then((o) => setOffer(o))
+      .then((o) => { setCopied(null); setOffer(o) })
       .catch((e) => setErr(e && e.message ? e.message : 'failed'))
       .finally(() => setBusy(false))
   }, [props])
@@ -453,11 +454,7 @@ function ActiveRelayPanel(props) {
             h(Button, {
               variant: 'ghost',
               size: 'sm',
-              onClick: () => {
-                if (navigator.clipboard && navigator.clipboard.writeText) {
-                  navigator.clipboard.writeText(s.relay_machine_id).catch(() => {})
-                }
-              },
+              onClick: () => { copyText(s.relay_machine_id) },
             }, 'Copy')))
       : null,
 
@@ -479,9 +476,28 @@ function ActiveRelayPanel(props) {
             h('div', { style: { flex: '1', minWidth: '200px' } },
               h('div', { className: 'mr-muted' }, 'Offer'),
               h('div', { className: 'mr-fingerprint' }, offer.offer_id),
+              // Camera trouble (auto-zoom cropping the code, no camera at
+              // all): the same payload the QR encodes can be copied and
+              // pasted into Mercury. It is copied, never rendered as text.
+              h('div', { className: 'mr-row', style: { marginTop: '10px' } },
+                h(Button, {
+                  variant: 'ghost',
+                  size: 'sm',
+                  disabled: !offer.pairing_payload,
+                  onClick: () => {
+                    copyText(offer.pairing_payload).then((ok) => {
+                      setCopied(ok ? 'copied' : 'failed')
+                      setTimeout(() => setCopied(null), 2000)
+                    })
+                  },
+                }, copied === 'copied' ? 'Copied' : 'Copy pairing code'),
+                copied === 'failed'
+                  ? h('span', { className: 'mr-muted' }, 'Clipboard unavailable')
+                  : null),
               h('div', { className: 'mr-muted', style: { marginTop: '10px' } },
-                'This QR contains the one-time pairing secret. It is shown once and ' +
-                  'never stored or displayed as text.')))
+                'This QR contains the one-time pairing secret. Scan it, or copy the ' +
+                  'pairing code and paste it into Mercury if the camera cannot read ' +
+                  'the QR. It is shown once and never stored or displayed as text.')))
         : null,
     ),
 
@@ -611,6 +627,34 @@ function QrSvg(props) {
     className: 'mr-qr',
     dangerouslySetInnerHTML: { __html: props.svg || '' },
   })
+}
+
+// Copy text to the clipboard. The async Clipboard API needs a secure context
+// and a user gesture; fall back to a transient textarea + execCommand for
+// the rare shell where it is unavailable. Resolves true when a copy happened.
+function copyText(text) {
+  if (typeof text !== 'string' || !text) return Promise.resolve(false)
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(text).then(() => true, () => copyTextLegacy(text))
+  }
+  return Promise.resolve(copyTextLegacy(text))
+}
+
+function copyTextLegacy(text) {
+  try {
+    const ta = document.createElement('textarea')
+    ta.value = text
+    ta.setAttribute('readonly', '')
+    ta.style.position = 'fixed'
+    ta.style.opacity = '0'
+    document.body.appendChild(ta)
+    ta.select()
+    const ok = document.execCommand && document.execCommand('copy')
+    document.body.removeChild(ta)
+    return Boolean(ok)
+  } catch (e) {
+    return false
+  }
 }
 
 // -- page --------------------------------------------------------------------
