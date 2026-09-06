@@ -130,3 +130,26 @@ def test_apply_refuses_non_git_and_runs_hermes_updater_for_git(tmp_path: Path) -
     result = asyncio.run(failing.apply())
     assert result["ok"] is False and result["reason"] == "update_failed"
     assert result["restart_required"] is False
+
+
+def test_latest_version_falls_back_to_tags_when_no_release_is_published(monkeypatch) -> None:
+    import urllib.error
+
+    from mercury_relay_plugin import update_check
+
+    def fake_get(url: str):
+        if url.startswith(update_check.RELEASES_URL):
+            raise urllib.error.HTTPError(url, 404, "Not Found", {}, None)
+        assert url.startswith(update_check.TAGS_URL)
+        return [{"name": "v0.1.0"}, {"name": "v0.10.0"}, {"name": "v0.2.1"}, {"name": "nightly"}]
+
+    monkeypatch.setattr(update_check, "_get_json", fake_get)
+    assert update_check.fetch_latest_release_version() == "0.10.0"
+
+    def prefer_release(url: str):
+        if url.startswith(update_check.RELEASES_URL):
+            return {"tag_name": "v0.3.0"}
+        raise AssertionError("tags must not be consulted when a release exists")
+
+    monkeypatch.setattr(update_check, "_get_json", prefer_release)
+    assert update_check.fetch_latest_release_version() == "0.3.0"

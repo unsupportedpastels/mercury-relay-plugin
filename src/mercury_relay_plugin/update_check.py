@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 from collections.abc import Callable
 from pathlib import Path
@@ -28,6 +29,7 @@ from typing import Any
 PLUGIN_NAME = "mercury-relay"
 RELEASE_REPO = "unsupportedpastels/mercury-relay-plugin"
 RELEASES_URL = f"https://api.github.com/repos/{RELEASE_REPO}/releases/latest"
+TAGS_URL = f"https://api.github.com/repos/{RELEASE_REPO}/tags?per_page=50"
 CHECK_INTERVAL_SECONDS = 6 * 3600
 STARTUP_DELAY_SECONDS = (20, 90)
 FETCH_TIMEOUT_SECONDS = 8
@@ -45,23 +47,45 @@ def parse_version(text: object) -> tuple[int, int, int] | None:
     return (int(match.group(1)), int(match.group(2)), int(match.group(3)))
 
 
-def fetch_latest_release_version() -> str:
-    """One anonymous GET; returns the bare version string (no leading v)."""
-
+def _get_json(url: str) -> Any:
     request = urllib.request.Request(
-        RELEASES_URL,
+        url,
         headers={
             "Accept": "application/vnd.github+json",
             "User-Agent": f"{PLUGIN_NAME}-plugin",
         },
     )
     with urllib.request.urlopen(request, timeout=FETCH_TIMEOUT_SECONDS) as response:  # noqa: S310
-        body = response.read(64 * 1024)
-    payload = json.loads(body.decode("utf-8"))
-    version = parse_version(payload.get("tag_name") if isinstance(payload, dict) else None)
-    if version is None:
-        raise ValueError("release tag is not a version")
-    return ".".join(str(part) for part in version)
+        body = response.read(256 * 1024)
+    return json.loads(body.decode("utf-8"))
+
+
+def fetch_latest_release_version() -> str:
+    """Anonymous GETs; returns the bare version string (no leading v).
+
+    Prefers the latest published release; when the repo only carries tags
+    (GitHub answers 404 for releases/latest), the highest semver tag wins.
+    """
+
+    try:
+        payload = _get_json(RELEASES_URL)
+        version = parse_version(payload.get("tag_name") if isinstance(payload, dict) else None)
+        if version is not None:
+            return ".".join(str(part) for part in version)
+    except urllib.error.HTTPError as error:
+        if error.code != 404:
+            raise
+    payload = _get_json(TAGS_URL)
+    versions = [
+        parsed
+        for item in (payload if isinstance(payload, list) else [])
+        if isinstance(item, dict)
+        for parsed in [parse_version(item.get("name"))]
+        if parsed is not None
+    ]
+    if not versions:
+        raise ValueError("no release or version tag found")
+    return ".".join(str(part) for part in max(versions))
 
 
 def default_update_command() -> list[str]:
