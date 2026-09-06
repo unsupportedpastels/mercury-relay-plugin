@@ -3,7 +3,7 @@
   "label": "Mercury Relay",
   "description": "Pair and manage Mercury's server-side encrypted Relay transport.",
   "icon": "Smartphone",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "tab": {
     "path": "/mercury-relay",
     "position": "after:skills"
