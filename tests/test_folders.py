@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import stat
 import sys
 from pathlib import Path
@@ -15,6 +16,10 @@ from mercury_relay_plugin import folders  # noqa: E402
 from mercury_relay_plugin.session_lease import SessionLease  # noqa: E402
 from mercury_relay_plugin.session_reads import SessionReads, SessionReadsError  # noqa: E402
 from mercury_relay_plugin.virtual_ws import VirtualWebSocket  # noqa: E402
+
+_POSIX_FOLDER_SERVICE = pytest.mark.skipif(
+    os.name != "posix", reason="folder service is advertised only with secure POSIX primitives"
+)
 
 
 class HostFixture:
@@ -83,43 +88,76 @@ def _deep_parent(root: Path, length: int) -> Path:
     return parent
 
 
-def test_derived_create_path_is_bounded_before_mutation(host: HostFixture) -> None:
-    parent = _deep_parent(host.root, 1022)
+@_POSIX_FOLDER_SERVICE
+def test_derived_create_path_is_bounded_before_mutation(
+    host: HostFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # macOS PATH_MAX leaves no room for a 1,024-byte pathname plus its NUL
+    # terminator. Use the same boundary logic with a lower configured limit;
+    # Linux exercises the production 1,024-unit value directly.
+    limit = folders.MAX_FOLDER_PATH_CHARS
+    if sys.platform == "darwin":
+        limit = 900
+        monkeypatch.setattr(folders, "MAX_FOLDER_PATH_CHARS", limit)
+    parent = _deep_parent(host.root, limit - 2)
     service = folders.FolderService()
     result = service.create_folder("default", str(parent), "x")
-    assert len(result["path"]) == 1024
+    assert len(result["path"]) == limit
     assert (parent / "x").is_dir()
     with pytest.raises(SessionReadsError, match="^invalid_params$"):
         service.create_folder("default", str(parent), "xx")
     assert not (parent / "xx").exists()
 
 
-def test_listing_never_emits_an_over_bound_child_path(host: HostFixture) -> None:
-    parent = _deep_parent(host.root, 1022)
+@_POSIX_FOLDER_SERVICE
+def test_listing_never_emits_an_over_bound_child_path(
+    host: HostFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    limit = folders.MAX_FOLDER_PATH_CHARS
+    if sys.platform == "darwin":
+        limit = 900
+        monkeypatch.setattr(folders, "MAX_FOLDER_PATH_CHARS", limit)
+    parent = _deep_parent(host.root, limit - 2)
     (parent / "x").mkdir()
     service = folders.FolderService()
-    assert len(service.list_folders("default", str(parent))["entries"][0]["path"]) == 1024
+    assert len(service.list_folders("default", str(parent))["entries"][0]["path"]) == limit
     (parent / "xx").mkdir()
     with pytest.raises(SessionReadsError, match="^response_too_large$"):
         service.list_folders("default", str(parent))
 
 
 def test_path_bound_uses_the_mobile_utf16_unit() -> None:
-    assert folders.validate_path("/" + "😀" * 511 + "x")
-    with pytest.raises(SessionReadsError, match="^invalid_params$"):
-        folders.validate_path("/" + "😀" * 512)
+    valid = "/" + "😀" * 511 + "x"
+    over = "/" + "😀" * 512
+    assert folders._path_units(valid) == 1_024
+    assert folders._path_units(over) == 1_025
+    if os.name == "posix":
+        assert folders.validate_path(valid)
+        with pytest.raises(SessionReadsError, match="^invalid_params$"):
+            folders.validate_path(over)
 
 
-def test_capability_uses_same_utf16_root_bound_as_listing(host: HostFixture) -> None:
+def test_capability_uses_same_utf16_root_bound_as_listing(
+    host: HostFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = host.root
-    for _ in range(8):
-        root = root / ("😀" * 63)
+    segment_count = 8
+    segment_length = 63
+    if sys.platform == "darwin":
+        # Keep the real nested path below macOS PATH_MAX while still making
+        # UTF-16 units exceed the deliberately reduced test limit.
+        monkeypatch.setattr(folders, "MAX_FOLDER_PATH_CHARS", 450)
+        segment_count = 4
+        segment_length = 50
+    for _ in range(segment_count):
+        root = root / ("😀" * segment_length)
         root.mkdir()
     host.policy.default_path = root
     host.policy.locked_root = root
     assert folders.FolderService().capability() is None
 
 
+@_POSIX_FOLDER_SERVICE
 def test_status_advertises_versioned_folder_methods(host: HostFixture) -> None:
     status = dispatch(reads_for(host), "relay.status", {})
     assert status["capabilities"]["folders"] == {
@@ -153,6 +191,7 @@ def test_folder_capability_is_hidden_without_posix_descriptor_primitives(
     assert "folders" not in status.get("capabilities", {})
 
 
+@_POSIX_FOLDER_SERVICE
 def test_real_installed_hermes_managed_files_policy_adapter(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -193,6 +232,7 @@ def test_real_installed_hermes_managed_files_policy_adapter(
     assert (root / "created").is_dir()
 
 
+@_POSIX_FOLDER_SERVICE
 def test_list_returns_relay_shape_filters_sensitive_and_symlink_entries(
     host: HostFixture,
 ) -> None:
@@ -228,6 +268,7 @@ def test_list_returns_relay_shape_filters_sensitive_and_symlink_entries(
     ]
 
 
+@_POSIX_FOLDER_SERVICE
 def test_list_rejects_traversal_and_symlink_path_without_leaking_host_errors(
     host: HostFixture,
 ) -> None:
@@ -255,6 +296,7 @@ def test_list_rejects_traversal_and_symlink_path_without_leaking_host_errors(
     assert "/" not in str(caught.value) or str(caught.value) == "folder_not_available"
 
 
+@_POSIX_FOLDER_SERVICE
 def test_create_returns_listing_and_is_confined_to_locked_root(host: HostFixture) -> None:
     result = dispatch(
         reads_for(host),
@@ -302,6 +344,7 @@ def test_create_returns_listing_and_is_confined_to_locked_root(host: HostFixture
         )
 
 
+@_POSIX_FOLDER_SERVICE
 def test_create_is_idempotent_for_existing_directory_but_not_files(host: HostFixture) -> None:
     existing = host.root / "existing"
     existing.mkdir()
@@ -322,6 +365,7 @@ def test_create_is_idempotent_for_existing_directory_but_not_files(host: HostFix
         )
 
 
+@_POSIX_FOLDER_SERVICE
 def test_listing_is_explicitly_bounded_not_silently_truncated(host: HostFixture) -> None:
     for index in range(folders.MAX_FOLDER_ENTRIES + 1):
         (host.root / f"entry-{index:04d}").mkdir()
@@ -330,6 +374,7 @@ def test_listing_is_explicitly_bounded_not_silently_truncated(host: HostFixture)
         dispatch(reads_for(host), "relay.folders.list", {"profile": "default"})
 
 
+@_POSIX_FOLDER_SERVICE
 def test_folder_params_and_profile_are_authorized(host: HostFixture) -> None:
     reads = reads_for(host)
     cases = [
@@ -539,6 +584,7 @@ def test_folder_creation_is_local_deduplicated_across_request_ids_and_reattach()
     asyncio.run(exercise())
 
 
+@_POSIX_FOLDER_SERVICE
 def test_new_request_identity_recreates_after_external_delete(host: HostFixture) -> None:
     async def exercise() -> None:
         reads = reads_for(host)
