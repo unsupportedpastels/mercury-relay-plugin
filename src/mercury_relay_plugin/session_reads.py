@@ -27,6 +27,9 @@ RELAY_READ_METHODS = frozenset(
         "relay.image.read",
     }
 )
+RELAY_FOLDER_METHODS = frozenset({"relay.folders.list", "relay.folders.create"})
+RELAY_LOCAL_METHODS = RELAY_READ_METHODS | RELAY_FOLDER_METHODS
+RELAY_MUTATION_METHODS = frozenset({"relay.folders.create"})
 MAX_LIST_LIMIT = 100
 DEFAULT_LIST_LIMIT = 20
 MAX_TRANSCRIPT_LIMIT = 500
@@ -109,6 +112,7 @@ class SessionReads:
         profile_authorizer: Callable[[str], bool] | None = None,
         db_opener: Callable[[str], Any] | None = None,
         status_snapshot: Callable[[], Mapping[str, Any]] | None = None,
+        folder_service: Any | None = None,
     ) -> None:
         if profile_authorizer is not None and not callable(profile_authorizer):
             raise TypeError("profile_authorizer must be callable")
@@ -116,9 +120,19 @@ class SessionReads:
             raise TypeError("db_opener must be callable")
         if status_snapshot is not None and not callable(status_snapshot):
             raise TypeError("status_snapshot must be callable")
+        if folder_service is not None:
+            if not callable(getattr(folder_service, "list_folders", None)) or not callable(
+                getattr(folder_service, "create_folder", None)
+            ):
+                raise TypeError("folder_service must provide list_folders and create_folder")
+        else:
+            from .folders import FolderService
+
+            folder_service = FolderService()
         self._profile_authorizer = profile_authorizer
         self._db_opener = db_opener or _open_profile_session_db
         self._status_snapshot = status_snapshot
+        self._folder_service = folder_service
 
     def _authorized_profile(self, params: Mapping[str, Any]) -> str:
         profile = params.get("profile", "default")
@@ -154,6 +168,10 @@ class SessionReads:
             profile = self._authorized_profile(params)
             path = validate_path(params["path"])
             return _bounded_result(await self._run_read(lambda: read_image(profile, path)))
+        if method == "relay.folders.list":
+            return await self._folders_list(params)
+        if method == "relay.folders.create":
+            return await self._folders_create(params)
         raise SessionReadsError("method_not_allowed")
 
     def _status(self, params: Mapping[str, Any]) -> dict[str, Any]:
@@ -165,18 +183,45 @@ class SessionReads:
             snapshot = dict(self._status_snapshot())
         except Exception:
             raise SessionReadsError("reads_unavailable") from None
+        from .folders import capability as folders_capability
         from .image_reads import capability
 
         image_read = capability()
+        folders = folders_capability()
         capabilities = dict(snapshot.get("capabilities", {}))
         capabilities.pop("image_read", None)
+        capabilities.pop("folders", None)
         if image_read is not None:
             capabilities["image_read"] = image_read
+        if folders is not None:
+            capabilities["folders"] = folders
         if capabilities:
             snapshot["capabilities"] = capabilities
         else:
             snapshot.pop("capabilities", None)
         return _bounded_result(snapshot)
+
+    async def _folders_list(self, params: Mapping[str, Any]) -> dict[str, Any]:
+        if "profile" not in params or not set(params) <= {"profile", "path"}:
+            raise SessionReadsError("invalid_params")
+        profile = self._authorized_profile(params)
+        path = params.get("path")
+        return _bounded_result(
+            await self._run_read(lambda: self._folder_service.list_folders(profile, path))
+        )
+
+    async def _folders_create(self, params: Mapping[str, Any]) -> dict[str, Any]:
+        if set(params) != {"profile", "parent_path", "name"}:
+            raise SessionReadsError("invalid_params")
+        profile = self._authorized_profile(params)
+        return _bounded_result(
+            await self._run_read(
+                lambda: self._folder_service.create_folder(
+                    profile, params["parent_path"], params["name"]
+                ),
+                failure_reason="folder_create_failed",
+            )
+        )
 
     async def _sessions_list(self, params: Mapping[str, Any]) -> dict[str, Any]:
         if not set(params) <= {"profile", "limit", "offset"}:
@@ -281,7 +326,9 @@ class SessionReads:
         return _bounded_result(await self._run_read(read))
 
     @staticmethod
-    async def _run_read(read: Callable[[], dict[str, Any]]) -> dict[str, Any]:
+    async def _run_read(
+        read: Callable[[], dict[str, Any]], *, failure_reason: str = "read_failed"
+    ) -> dict[str, Any]:
         try:
             return await asyncio.to_thread(read)
         except SessionReadsError:
@@ -291,13 +338,16 @@ class SessionReads:
         except Exception:
             # Locks, malformed rows, and every other database failure map to
             # one stable reason without leaking paths or SQL detail.
-            raise SessionReadsError("read_failed") from None
+            raise SessionReadsError(failure_reason) from None
 
 
 __all__ = [
     "MAX_LIST_LIMIT",
     "MAX_RESULT_BYTES",
     "MAX_TRANSCRIPT_LIMIT",
+    "RELAY_FOLDER_METHODS",
+    "RELAY_LOCAL_METHODS",
+    "RELAY_MUTATION_METHODS",
     "RELAY_READ_METHODS",
     "SessionReads",
     "SessionReadsError",

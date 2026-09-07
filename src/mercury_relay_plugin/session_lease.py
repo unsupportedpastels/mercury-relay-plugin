@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import secrets
 import time
@@ -28,13 +29,18 @@ from dataclasses import dataclass
 from typing import Any
 
 from .lease_recovery import RecoveryProjection
-from .session_reads import RELAY_READ_METHODS, SessionReadsError
+from .session_reads import (
+    RELAY_LOCAL_METHODS,
+    RELAY_MUTATION_METHODS,
+    SessionReadsError,
+)
 from .strict_json import StrictJsonError, loads_strict
 from .virtual_ws import VirtualWebSocketClosed, VirtualWebSocketError
 
 MAX_SUBMISSION_ID_TEXT = 128
 MAX_CURSOR = 2**63 - 1
 MAX_READS_IN_FLIGHT = 8
+MAX_LOCAL_MUTATIONS = 8
 
 
 class SessionLeaseError(RuntimeError):
@@ -200,6 +206,15 @@ class _SubmissionRecord:
         self.waiters: list[Any] = []
 
 
+class _LocalMutationRecord:
+    __slots__ = ("payload_fingerprint", "outcome", "waiters")
+
+    def __init__(self, payload_fingerprint: str) -> None:
+        self.payload_fingerprint = payload_fingerprint
+        self.outcome: dict[str, Any] | None = None
+        self.waiters: list[Any] = []
+
+
 class SessionLease:
     """Own one inner Hermes controller across outer transport loss."""
 
@@ -258,6 +273,7 @@ class SessionLease:
         self.trimmed_through = 0
         self._attachment: LeaseAttachment | None = None
         self._submissions: OrderedDict[str, _SubmissionRecord] = OrderedDict()
+        self._mutations: OrderedDict[str, _LocalMutationRecord] = OrderedDict()
         self._read_dispatcher = read_dispatcher
         self._on_release = on_release
         self._read_tasks: set[asyncio.Task[None]] = set()
@@ -508,10 +524,13 @@ class SessionLease:
             value = None
         if (
             isinstance(value, Mapping)
-            and value.get("method") in RELAY_READ_METHODS
+            and value.get("method") in RELAY_LOCAL_METHODS
             and self._read_dispatcher is not None
         ):
-            self._start_read(value, attachment)
+            if value.get("method") in RELAY_MUTATION_METHODS:
+                self._start_mutation(value, attachment)
+            else:
+                self._start_read(value, attachment)
             return
         submission = self._parse_submission(value)
         if submission is None:
@@ -607,6 +626,137 @@ class SessionLease:
             self._deliver_local(response, attachment)
 
         task = asyncio.create_task(run(), name="mercury-session-lease-read")
+        self._read_tasks.add(task)
+        task.add_done_callback(self._read_tasks.discard)
+
+    def _start_mutation(self, request: Mapping[str, Any], attachment: LeaseAttachment) -> None:
+        """Run one Mercury-owned mutation with retained semantic deduplication.
+
+        A request id is the retry identity. Clients namespace ids per socket,
+        so a new connection gets a new identity even when it restarts numeric
+        ids. The payload fingerprint fences accidental reuse of one id for a
+        different mutation. This is intentionally separate from the Hermes
+        ``prompt.submit`` ledger: folder creation is local to the relay and
+        must never enter the inner Hermes controller.
+        """
+
+        method = request.get("method")
+        request_id = request.get("id")
+        params = request.get("params", {})
+        if (
+            request.get("jsonrpc") != "2.0"
+            or not set(request) <= {"jsonrpc", "id", "method", "params"}
+            or request_id is None
+            or isinstance(request_id, bool)
+            or not isinstance(request_id, (str, int))
+            or (isinstance(request_id, str) and not request_id)
+            or not isinstance(method, str)
+            or method not in RELAY_MUTATION_METHODS
+            or not isinstance(params, Mapping)
+        ):
+            raise SessionLeaseError("invalid_read_request")
+        try:
+            bounded_id = (
+                1 <= len(request_id.encode("utf-8")) <= 128
+                if isinstance(request_id, str)
+                else -(2**63) <= request_id < 2**63
+            )
+            payload_fingerprint = hashlib.sha256(
+                json.dumps(
+                    {"method": method, "params": dict(params)},
+                    ensure_ascii=True,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
+            request_identity = hashlib.sha256(
+                json.dumps(
+                    {"method": method, "id": request_id},
+                    ensure_ascii=True,
+                    allow_nan=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+            ).hexdigest()
+        except (TypeError, UnicodeError, ValueError, RecursionError):
+            bounded_id = False
+            payload_fingerprint = ""
+            request_identity = ""
+        if not bounded_id:
+            raise SessionLeaseError("invalid_read_request")
+
+        record = self._mutations.get(request_identity)
+        if record is not None:
+            self._mutations.move_to_end(request_identity)
+            if record.payload_fingerprint != payload_fingerprint:
+                self._deliver_local(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32000, "message": "invalid_params"},
+                    },
+                    attachment,
+                )
+            elif record.outcome is not None:
+                self._deliver_outcome(record.outcome, request_id, attachment)
+            elif (request_id, attachment) not in record.waiters:
+                # A lease has one current attachment. Keep only its waiter;
+                # repeated outer reconnects must not retain detached sockets
+                # while a slow filesystem mutation is still in flight.
+                record.waiters[:] = [(request_id, attachment)]
+            return
+
+        if len(self._mutations) >= min(self.limits.max_tracked_submissions, MAX_LOCAL_MUTATIONS):
+            evicted = False
+            for key, candidate in list(self._mutations.items()):
+                if candidate.outcome is not None:
+                    del self._mutations[key]
+                    evicted = True
+                    break
+            if not evicted:
+                self._deliver_local(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "error": {"code": -32000, "message": "rate_limited"},
+                    },
+                    attachment,
+                )
+                return
+
+        record = _LocalMutationRecord(payload_fingerprint)
+        record.waiters.append((request_id, attachment))
+        self._mutations[request_identity] = record
+        dispatcher = self._read_dispatcher
+        assert dispatcher is not None
+
+        async def run() -> None:
+            try:
+                result = await dispatcher(method, dict(params))
+                outcome: dict[str, Any] = {"result": result}
+            except asyncio.CancelledError:
+                raise
+            except SessionReadsError as error:
+                outcome = {
+                    "error": {"code": -32000, "message": error.reason},
+                }
+            except Exception:
+                outcome = {
+                    "error": {"code": -32000, "message": "read_failed"},
+                }
+            if self.released:
+                return
+            record.outcome = outcome
+            waiters, record.waiters = record.waiters, []
+            for waiter, waiter_attachment in waiters:
+                self._deliver_outcome(outcome, waiter, waiter_attachment)
+            if "error" in outcome and self._mutations.get(request_identity) is record:
+                # A new namespaced request must be able to retry a transient
+                # host failure instead of inheriting a stale error forever.
+                del self._mutations[request_identity]
+
+        task = asyncio.create_task(run(), name="mercury-session-lease-mutation")
         self._read_tasks.add(task)
         task.add_done_callback(self._read_tasks.discard)
 

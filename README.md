@@ -229,6 +229,8 @@ client implementers:
 
 - [`docs/IMAGE_READ.md`](docs/IMAGE_READ.md): bounded, policy-checked image
   reads from the host's managed file root.
+- [`docs/FOLDERS.md`](docs/FOLDERS.md): versioned, policy-checked folder
+  browsing and idempotent directory creation over the encrypted channel.
 - [`docs/LEASE_RECOVERY.md`](docs/LEASE_RECOVERY.md): reattaching a device to
   its retained session after a dropped connection, and lease channels so one
   phone can keep several sessions open at once.
