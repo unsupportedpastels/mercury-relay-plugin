@@ -13,7 +13,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parents[1] / "src"))
 
 from mercury_relay_plugin import folders  # noqa: E402
-from mercury_relay_plugin.session_lease import SessionLease  # noqa: E402
+from mercury_relay_plugin.session_lease import SessionLease, SessionLeaseError  # noqa: E402
 from mercury_relay_plugin.session_reads import SessionReads, SessionReadsError  # noqa: E402
 from mercury_relay_plugin.virtual_ws import VirtualWebSocket  # noqa: E402
 
@@ -579,6 +579,46 @@ def test_folder_creation_is_local_deduplicated_across_request_ids_and_reattach()
         replay_retry = json.loads(await reattached.next_text(timeout=0.5))
         assert replay_retry["id"] == "after-reconnect"
         assert service.create_calls == 5
+        await lease.release("test_finished")
+
+    asyncio.run(exercise())
+
+
+def test_local_read_rejects_unencodable_request_id() -> None:
+    async def exercise() -> None:
+        called: list[tuple[str, dict]] = []
+
+        async def dispatch(method: str, params: dict) -> dict:
+            called.append((method, params))
+            return {}
+
+        websocket = VirtualWebSocket()
+        await websocket.accept()
+        async def close_controller(_controller: str) -> bool:
+            return True
+
+        lease = SessionLease(
+            device_id="device-1",
+            profile="default",
+            controller_id="controller-1",
+            websocket=websocket,
+            close_controller=close_controller,
+            read_dispatcher=dispatch,
+        )
+        lease.start()
+        attachment = lease.attach(0)
+        await attachment.next_text(timeout=0.5)
+        request = json.dumps(
+            {
+                "jsonrpc": "2.0",
+                "id": chr(0xD800),
+                "method": "relay.folders.list",
+                "params": {"profile": "default"},
+            }
+        )
+        with pytest.raises(SessionLeaseError, match="^invalid_read_request$"):
+            await attachment.feed_text(request)
+        assert called == []
         await lease.release("test_finished")
 
     asyncio.run(exercise())

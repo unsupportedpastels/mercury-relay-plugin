@@ -41,6 +41,20 @@ MAX_SUBMISSION_ID_TEXT = 128
 MAX_CURSOR = 2**63 - 1
 MAX_READS_IN_FLIGHT = 8
 MAX_LOCAL_MUTATIONS = 8
+MAX_LOCAL_REQUEST_ID_BYTES = 128
+
+
+def _valid_local_request_id(request_id: Any) -> bool:
+    """Whether a local JSON-RPC response can safely echo *request_id*."""
+
+    try:
+        return (
+            1 <= len(request_id.encode("utf-8")) <= MAX_LOCAL_REQUEST_ID_BYTES
+            if isinstance(request_id, str)
+            else -(2**63) <= request_id < 2**63
+        )
+    except (TypeError, UnicodeError):
+        return False
 
 
 class SessionLeaseError(RuntimeError):
@@ -581,17 +595,8 @@ class SessionLease:
         ):
             raise SessionLeaseError("invalid_read_request")
         dispatcher = self._read_dispatcher
-        if method == "relay.image.read":
-            try:
-                bounded_id = (
-                    1 <= len(request_id.encode("utf-8")) <= 128
-                    if isinstance(request_id, str)
-                    else -(2**63) <= request_id < 2**63
-                )
-            except UnicodeError:
-                bounded_id = False
-            if not bounded_id:
-                raise SessionLeaseError("invalid_read_request")
+        if not _valid_local_request_id(request_id):
+            raise SessionLeaseError("invalid_read_request")
         assert dispatcher is not None
         live = sum(1 for task in self._read_tasks if not task.done())
         if live >= MAX_READS_IN_FLIGHT:
@@ -656,11 +661,7 @@ class SessionLease:
         ):
             raise SessionLeaseError("invalid_read_request")
         try:
-            bounded_id = (
-                1 <= len(request_id.encode("utf-8")) <= 128
-                if isinstance(request_id, str)
-                else -(2**63) <= request_id < 2**63
-            )
+            bounded_id = _valid_local_request_id(request_id)
             payload_fingerprint = hashlib.sha256(
                 json.dumps(
                     {"method": method, "params": dict(params)},
