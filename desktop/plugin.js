@@ -149,8 +149,8 @@ async function probeGatewayStatus(connectionId, timeoutMs = 4000) {
   }
 }
 
-// Hermes answers a plugin route with two different 404 bodies, and the
-// bridge folds the body into the error message ("404: {...}"):
+// The bridge folds HTTP status and body into the error message ("404: {...}").
+// Known Hermes plugin-route responses:
 //   {"detail":"Plugin not found"} — the per-request gate: mercury-relay is
 //     not in plugins.enabled (or is in plugins.disabled) for the home that
 //     backend reads. The install never completed with enable, or it was
@@ -160,19 +160,23 @@ async function probeGatewayStatus(connectionId, timeoutMs = 4000) {
 //     web-server start. That process predates the install and needs a
 //     restart. For "This device" that process is Hermes Desktop's own
 //     `hermes serve` child, so `hermes gateway restart` does not touch it.
-// Returns 'not-enabled' | 'restart-needed' | 'not-installed' | null.
+// The headless web-UI fallback can also catch an unmounted API path; it does
+// not imply that `hermes serve` cannot mount plugin APIs. Neither this nor a
+// generic 404 proves installation state. Keep unknown 404s non-diagnostic.
+// Returns 'not-enabled' | 'restart-needed' | 'api-unavailable' | null.
 function classify404(message) {
   const text = String(message || '')
   if (!(/\b404\b/.test(text) || /no such api endpoint/i.test(text))) return null
   if (/plugin not found/i.test(text)) return 'not-enabled'
-  if (/"detail"\s*:\s*"Not Found"/.test(text)) return 'restart-needed'
-  return 'not-installed'
+  if (/"detail"\s*:\s*"Not Found"/.test(text) ||
+      /Headless backend \(hermes serve\): web UI disabled/i.test(text)) return 'restart-needed'
+  return 'api-unavailable'
 }
 
 const NOT_FOUND_TEXT = {
   'not-enabled': 'relay installed but not enabled here',
-  'restart-needed': 'relay installed, restart needed',
-  'not-installed': 'relay not installed here',
+  'restart-needed': 'relay API restart needed',
+  'api-unavailable': 'relay API unavailable',
 }
 
 function statusOf(result) {
@@ -180,7 +184,7 @@ function statusOf(result) {
   // reach this box now); amber = reachable but relay not fully serving; red =
   // unreachable / auth needed; grey = couldn't determine.
   if (!result) return { color: 'grey', text: 'unknown' }
-  if (result.notFound) return { color: 'amber', text: NOT_FOUND_TEXT[result.notFoundKind] || NOT_FOUND_TEXT['not-installed'] }
+  if (result.notFound) return { color: 'amber', text: NOT_FOUND_TEXT[result.notFoundKind] || NOT_FOUND_TEXT['api-unavailable'] }
   if (result.error) return { color: 'red', text: 'unreachable' }
   const s = result.status
   if (!s) return { color: 'grey', text: 'unknown' }
@@ -272,16 +276,28 @@ async function activateConnection(connectionId) {
   }
 }
 
+// Shared, API-independent postinstall help: inline in the missing-API card,
+// otherwise one compact banner above the controls. Never restart active work.
+function InstallRestartGuidance() {
+  return h('div', { className: 'mr-muted' },
+    h('strong', null, 'After installing or updating: '),
+    'finish your running tasks, then fully quit and reopen Hermes Desktop ' +
+      '(Cmd+Q on macOS; Quit/Exit elsewhere). Closing the window, reloading the desktop plugin, ' +
+      'or `hermes gateway restart` does not restart Desktop’s separate `hermes serve` child. ' +
+      'Plugin API routes mount at backend startup. For a remote connection, restart the ' +
+      'API-serving process on that host too; `hermes gateway restart` only restarts the gateway service.')
+}
+
 // Shown in place of the Pair/Devices cards when the active gateway has no
-// serving relay backend. Reads the 404 body so the operator learns which of
-// the three states they are in instead of a generic "not available".
+// serving relay backend. Reads the 404 body to identify known disabled/restart
+// states, without treating every 404 as an absent install.
 function MissingBackendCard(props) {
   const message = props.error && props.error.message ? String(props.error.message) : String(props.error || '')
   const kind = classify404(message)
   let title = 'Relay not available on this gateway'
   let body =
-    'The active connection has no Mercury Relay backend. Switch to a gateway ' +
-    'where the relay plugin is installed and enabled, or install it there.'
+    'The relay API could not be reached; installation state is unknown. Check the active ' +
+    'connection and confirm Mercury Relay is installed and enabled in that backend’s HERMES_HOME.'
   if (kind === 'not-enabled') {
     title = 'Relay plugin is installed here but not enabled'
     body =
@@ -289,23 +305,20 @@ function MissingBackendCard(props) {
       'Run `hermes plugins enable mercury-relay` on that machine (with the same HERMES_HOME ' +
       'the gateway uses), or toggle it on under Settings > Plugins, then restart the gateway.'
   } else if (kind === 'restart-needed') {
-    title = 'Relay plugin is installed and enabled; restart needed'
+    title = 'Relay API restart needed'
     body =
-      'Plugin routes load once when the gateway process starts, and this one started before ' +
-      'the install. For "This device", quit and reopen Hermes Desktop (its gateway is its ' +
-      'own child process; `hermes gateway restart` does not reach it). For a remote gateway, ' +
-      'run `hermes gateway restart` on that host.'
-  } else if (kind === 'not-installed') {
-    title = 'Relay plugin is not installed on this gateway'
-    body =
-      'Install it on that machine with `hermes plugins install unsupportedpastels/mercury-relay-plugin` ' +
-      '(git must be on PATH there), answer y to enable, then restart that gateway.'
+      'The relay route is not mounted in this running backend. After an install or update, ' +
+      'restart the API-serving process to load it. A headless web-UI fallback on this API ' +
+      'path does not mean headless backends cannot serve plugin APIs.'
+  } else if (kind === 'api-unavailable') {
+    title = 'Relay API unavailable on this gateway'
   }
   return h(
     'div',
     { className: 'mr-card' },
     h('h2', null, title),
     h('div', { className: 'mr-muted' }, body),
+    h(InstallRestartGuidance),
   )
 }
 
@@ -496,6 +509,7 @@ function ActiveRelayPanel(props) {
   return h(
     'div',
     { className: 'mr-stack', style: { display: 'flex', flexDirection: 'column', gap: '18px' } },
+    h('div', { className: 'mr-banner' }, h(InstallRestartGuidance)),
     err ? h('div', { className: 'mr-banner mr-error' }, 'Error: ' + err) : null,
     s && s.relay_origin_configured === false
       ? h('div', { className: 'mr-banner' },
