@@ -48,7 +48,7 @@ function h(type, props) {
 const API_BASE = '/api/plugins/mercury-relay'
 // Version of THIS desktop half. Kept in step with the plugin manifest by a
 // test; the gateway's plugin reports its own version over /update.
-const DESKTOP_PLUGIN_VERSION = '0.2.12'
+const DESKTOP_PLUGIN_VERSION = '0.2.13'
 // The public repo both halves install from; the desktop bridge re-clones it.
 const PLUGIN_REPO = 'unsupportedpastels/mercury-relay-plugin'
 
