@@ -1,4 +1,4 @@
-"""Source-level checks for the desktop plugin half.
+"""Structural checks and Node behavioral tests for the desktop plugin half.
 
 The desktop plugin runs in the Electron renderer with the injected
 ``@hermes/plugin-sdk``/``react`` shims, so it can't be imported here. These
@@ -77,13 +77,18 @@ def test_roster_reads_registry_and_probes_scoped() -> None:
     assert "supported === false" in src  # graceful-degrade guard
 
 
-def test_roster_light_distinguishes_not_installed_from_unreachable() -> None:
-    src = _source()
-    # A 404 (relay plugin absent) reads amber "not installed", not red
-    # "unreachable"; operational is an explicit green.
-    assert "notFound" in src
-    assert "relay not installed here" in src
-    assert "color: 'green'" in src
+def test_desktop_behavior() -> None:
+    """Run the actual plugin functions with host/React boundary shims."""
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is required for desktop behavioral tests")
+    result = subprocess.run(
+        [node, "--test", str(Path(__file__).with_name("desktop_behavior.cjs"))],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_qr_is_server_rendered_not_reconstructed_client_side() -> None:
@@ -150,25 +155,6 @@ def test_qr_default_size_is_at_least_320px() -> None:
     assert ".mr-qr svg{width:200px" not in desktop  # the old cramped size is gone
 
 
-def test_roster_light_distinguishes_the_three_404_states() -> None:
-    """Hermes answers a plugin route with two different 404 bodies. The gate
-    says "Plugin not found" when the name is not in plugins.enabled; plain
-    FastAPI says "Not Found" when it is enabled but the router was never
-    mounted (process predates the install). The roster must not collapse
-    these into one "not installed" light, and the restart guidance must
-    name Hermes Desktop for the local child process."""
-    src = _source()
-    assert "function classify404" in src
-    assert "plugin not found" in src.lower()
-    assert '"Not Found"' in src
-    assert "relay installed but not enabled here" in src
-    assert "relay installed, restart needed" in src
-    assert "relay not installed here" in src
-    assert "MissingBackendCard" in src
-    assert "quit and reopen Hermes Desktop" in src
-    assert "hermes plugins enable mercury-relay" in src
-
-
 DOCS = Path(__file__).parents[1]
 
 
@@ -180,6 +166,9 @@ def test_install_docs_name_the_right_restart_and_git(name: str) -> None:
     assert "quit and reopen hermes desktop" in text.lower()
     assert "hermes gateway restart" in text
     assert "git" in text and "PATH" in text
+    for guidance in ("Cmd+Q", "Quit/Exit", "running tasks", "Closing the window",
+                     "reloading the desktop plugin", "hermes serve", "API unavailable"):
+        assert guidance in text
 
 
 def test_roster_names_the_unallowlisted_state() -> None:

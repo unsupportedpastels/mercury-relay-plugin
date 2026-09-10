@@ -47,34 +47,46 @@ gateway half on whichever gateway is active in Hermes Desktop, local or remote.<
   inside the dialog while a green "Desktop plugin installed" toast still appears.</li>
 </ul>
 
-<h2>Then restart the right process</h2>
-<p>Plugin routes load when the gateway process starts, so the install is not live until
-that process restarts:</p>
-<ul>
-  <li><strong>"This device"</strong> in Hermes Desktop is a gateway process the app runs
-  itself. Quit and reopen Hermes Desktop. <code>hermes gateway restart</code> does not
-  reach it.</li>
-  <li><strong>A remote gateway</strong>: run <code>hermes gateway restart</code> on that host.</li>
-</ul>
-<p>Once restarted, the relay page's roster light turns from "not installed here" to
-"operational". If it still says "installed but not enabled", run
-<code>hermes plugins enable mercury-relay</code> on the gateway machine, with the same
-<code>HERMES_HOME</code> the gateway uses, and restart again.</p>
+<h2 id="restart">After installing or updating: restart the right process</h2>
+<p><strong>Finish your running tasks, then fully quit and reopen Hermes Desktop</strong>
+(<strong>Cmd+Q</strong> on macOS; <strong>Quit/Exit</strong> elsewhere).
+Closing the window, reloading the desktop plugin, or running
+<code>hermes gateway restart</code> does not restart Desktop's separate
+<code>hermes serve</code> child for <strong>"This device"</strong>.
+Plugin API routes mount at backend startup, not when the desktop UI reloads.</p>
+<p>For a remote connection, restart the API-serving process on that host too.
+<code>hermes gateway restart</code> restarts the gateway service; a separately run
+<code>hermes serve</code> or <code>hermes dashboard</code> needs its own restart.</p>
+<p>Open <strong>Mercury Relay</strong> in the Desktop sidebar after installation
+(enable its desktop half in Settings &gt; Plugins if needed). The plugin-owned
+page shows this guidance even when its API is absent; this repository cannot
+change Hermes' core installation dialog.</p>
+<p>A 404 with <code>"Plugin not found"</code> indicates the enablement gate:
+run <code>hermes plugins enable mercury-relay</code> in the backend's
+<code>HERMES_HOME</code> and restart the right process. A 404 with
+<code>{"detail":"Not Found"}</code> or
+<code>Headless backend (hermes serve): web UI disabled — use `hermes dashboard` for the browser UI.</code>
+on the plugin API path calls for a restart after installation. Headless backends
+can serve plugin APIs; a process started before installation has not mounted the
+route yet. Other 404s mean <strong>relay API unavailable</strong>, not proof of a
+missing installation. If it persists, check the active connection, installation,
+enablement, and backend logs. The roster shows operational only when the relay
+is actually connected.</p>
 
 <h2>Nothing happened?</h2>
 <p>Hermes Desktop is not installed on this computer, or the browser blocked the link.
 Install from the Hermes command line instead. This works the same on macOS, Linux, and
 Windows and targets the machine you run it on:</p>
 <pre><code>hermes plugins install unsupportedpastels/mercury-relay-plugin</code></pre>
-<p>Answer <code>y</code> when asked to enable the plugin, then restart the gateway with
-<code>hermes gateway restart</code>. If that gateway is the "This device" one in Hermes
-Desktop, quit and reopen Hermes Desktop instead. git must be on PATH for this command too.</p>
+<p>Answer <code>y</code> when asked to enable the plugin, then follow the
+<a href="#restart">full-quit restart steps above</a>. git must be on PATH for this command too.</p>
 
 <h2>Manual clone</h2>
 <p>Clone into <code>plugins/mercury-relay</code> under your Hermes home
 (<code>~/.hermes</code> on macOS and Linux, <code>%LOCALAPPDATA%\hermes</code> on Windows,
 or wherever <code>HERMES_HOME</code> points), then add <code>mercury-relay</code> to
-<code>plugins.enabled</code> in <code>config.yaml</code>. Full instructions are in the
+<code>plugins.enabled</code> in <code>config.yaml</code>, then follow the
+<a href="#restart">same restart steps</a>. Full instructions are in the
 <a href="https://github.com/unsupportedpastels/mercury-relay-plugin#install">README</a>.</p>
 
 <small class="muted">Source: <a href="https://github.com/unsupportedpastels/mercury-relay-plugin">github.com/unsupportedpastels/mercury-relay-plugin</a> (MIT).</small>

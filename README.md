@@ -77,7 +77,8 @@ python -m pytest -q
 
 The suite runs without a Hermes checkout; the in-process Hermes contract tests
 skip in that case. To run them too, point `scripts/compat_gate.sh` at a Hermes
-source tree.
+source tree. Node.js 18+ is required to execute the desktop behavioral tests;
+without Node, those tests and the JavaScript syntax check explicitly skip.
 
 ## Install
 
@@ -149,20 +150,37 @@ plugins:
     - mercury-relay
 ```
 
-Whichever option you used, restart the gateway process, because plugin API
-routes load once at startup. For a gateway you run yourself that is
-`hermes gateway restart`. For the **"This device"** gateway inside Hermes
-Desktop, quit and reopen Hermes Desktop: that gateway is a child process the
-app runs itself, and `hermes gateway restart` does not reach it.
+### After every install or update: restart the right process
 
-If the relay page still shows a 404 afterwards, the body tells you which
-state the gateway is in. `{"detail":"Plugin not found"}` means `mercury-relay`
-is not in `plugins.enabled` for the home that gateway reads; run
-`hermes plugins enable mercury-relay` there with the same `HERMES_HOME` and
-restart again. `{"detail":"Not Found"}` means it is enabled but the process
-has not been restarted since the install. The desktop tab's roster shows the
-same distinction as "installed but not enabled", "installed, restart needed",
-or "not installed".
+**Finish your running tasks, then fully quit and reopen Hermes Desktop**
+(**Cmd+Q** on macOS; **Quit/Exit** elsewhere). This applies to all three install
+options above and to updates. Closing the window, reloading the desktop plugin,
+or running `hermes gateway restart` does **not** restart Desktop's separate
+`hermes serve` child for **"This device"**. Plugin API routes mount at backend
+startup; the desktop UI can load before those routes exist.
+
+For a remote connection, restart the API-serving process on that host too.
+`hermes gateway restart` restarts the gateway service; if you run `hermes serve`
+or `hermes dashboard` separately, restart that process as well.
+
+After installation, open **Mercury Relay** in the Desktop sidebar (enable the
+desktop half under **Settings > Plugins** if needed). Its postinstall guidance
+is visible even when the backend API is absent. This repository owns that page,
+not Hermes' core installation dialog.
+
+If the relay page still shows a 404, check the response:
+
+- `{"detail":"Plugin not found"}` indicates the enablement gate. Confirm
+  `mercury-relay` is enabled in the backend's `HERMES_HOME`; run
+  `hermes plugins enable mercury-relay` there, then restart the right process.
+- `{"detail":"Not Found"}` or the headless fallback
+  ``{"error":"Headless backend (hermes serve): web UI disabled — use `hermes dashboard` for the browser UI."}``
+  on the plugin API path calls for a backend restart after installation.
+  The headless fallback does **not** mean headless backends cannot serve plugin
+  APIs: a backend started before installation has not mounted the route yet.
+- Other 404s show **relay API unavailable**: installation state is unknown,
+  not proof the plugin is missing. Check the active connection, installation,
+  enablement, and backend logs if restarting does not resolve it.
 
 The dashboard gains a **Mercury Relay** tab where you create a
 one-time pairing QR, compare the fingerprint the phone shows, and approve or
@@ -208,10 +226,9 @@ Hermes Desktop only loads plugins from the machine it runs on, so:
 
 - If Hermes Desktop runs on the host you just installed on, it finds the
   desktop half automatically at `plugins/mercury-relay/desktop/plugin.js`.
-  It ships off by default. Quit and reopen Hermes Desktop first (the restart
-  step above), then turn it on under **Settings > Plugins**: a half switched
-  on before that restart shows its sidebar entry but a blank page until the
-  app restarts.
+  It ships off by default. Turn it on under **Settings > Plugins** and open
+  **Mercury Relay** for the postinstall guidance, then follow the full-quit
+  restart step above. A loaded sidebar entry does not prove the API is mounted.
 - If Hermes Desktop runs on another machine (a Windows laptop talking to a
   Linux host, for example), install the repository there too: click the
   **Install in Hermes** link above from that laptop, or use
@@ -248,11 +265,12 @@ plugin's public config to turn the timer off; "Check now" still works.
 "Update now" never replaces code itself. It runs Hermes' own
 `hermes plugins update mercury-relay`, so Hermes' install validation and
 supply-chain scan apply, and it only works for git checkouts that are not
-pinned. Restart the gateway afterwards to load the new version (quit and
-reopen Hermes Desktop when the gateway is its "This device" one). From Hermes
+pinned. Follow [the full-quit restart steps above](#after-every-install-or-update-restart-the-right-process)
+after finishing running tasks to load the new version. From Hermes
 Desktop the card shows both halves: "Update gateway plugin" updates the active
 gateway's plugin (local or remote), and "Update desktop plugin" asks Hermes
 Desktop to re-download this plugin and reload it in place on that computer.
+That UI reload does not restart Desktop’s separate backend child.
 
 ## Layout
 
