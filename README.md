@@ -168,6 +168,38 @@ desktop half under **Settings > Plugins** if needed). Its postinstall guidance
 is visible even when the backend API is absent. This repository owns that page,
 not Hermes' core installation dialog.
 
+### Inline image guidance for new Hermes sessions
+
+On Hermes versions that expose the public cache-safe system-prompt-section API,
+the enabled host plugin registers one bounded, static instruction explaining
+how to return a host-local image as a standalone `MEDIA:/absolute/path.png`
+line. It also tells the model to verify the file and the applicable delivery
+path's format and size limits first. The Relay image-read path accepts
+PNG, JPEG, GIF, WebP, and BMP files up to 2 MiB; that 2 MiB ceiling is not a
+universal limit for other direct Hermes delivery paths.
+
+The registration is profile-wide, not Mercury-session-specific. It applies to
+every **new** agent session created in the profile where the host plugin is
+enabled, including sessions begun in the Hermes TUI and sessions that might
+never be opened in Mercury. This is deliberate because a conversation can be
+opened from Mercury later. The plugin does not inspect the current client,
+rewrite user prompts, or inject dynamic text on every turn.
+
+Hermes renders the section once when a new session is created and freezes the
+full system prompt. Installing, enabling, updating, or changing this plugin
+does not add new guidance to an existing session: compression, process restart,
+and resume preserve that session's already-frozen prompt. Start a new session
+after the host plugin has loaded to receive the guidance.
+
+The manifest intentionally keeps API version 1 compatibility and declares no
+minimum Hermes release. If a supported older Hermes host lacks
+`register_system_prompt_section`, the plugin logs a warning and skips only this
+guidance instead of calling a private API or preventing the Relay backend from
+loading. A profile or direct Hermes installation without this host plugin gets
+no Mercury-specific guidance. System-prompt guidance improves model behavior;
+it does not guarantee obedience or successful media delivery, so clients and
+the Relay path still enforce their own file checks and limits.
+
 If the relay page still shows a 404, check the response:
 
 - `{"detail":"Plugin not found"}` indicates the enablement gate. Confirm
