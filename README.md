@@ -8,9 +8,11 @@ and iOS apps reach your Hermes host when it has no reachable server origin
 The plugin opens one outbound connection from your host to a hosted router and
 carries the normal Hermes JSON-RPC session contract inside an end-to-end
 encrypted channel that terminates on your phone and on this plugin. The router
-in the middle is closed source and operated by the Mercury maintainers. **It
-only ever forwards ciphertext.** Everything needed to check that claim is open:
-this plugin, the phone apps, and the protocol test vectors both ends share.
+in the middle is closed source and operated by the Mercury maintainers. **Hermes
+session content is forwarded only as ciphertext.** The optional APNs bridge is
+separate: the relay also receives push registration metadata and sends generic
+notifications (see below). The host plugin, phone apps, and shared protocol test
+vectors are open for audit.
 
 ## What the router can and cannot see
 
@@ -30,6 +32,10 @@ Visible to the router, by design:
 - ciphertext record sizes and timing
 - the device's routing token, an admission credential for the router that
   grants nothing on the Hermes side
+- **only with optional push enabled and a device registered:** the APNs device
+  token, sandbox environment, random revocable wake handle, fresh random event
+  IDs, host routing JWT, and registration/wake timing. The relay's APNs sender
+  and Apple can see the generic notification, never Hermes conversation content
 
 The plugin never exposes a listener. The host connection is outbound only,
 reconnects with capped backoff, and treats any router protocol violation as a
@@ -57,9 +63,12 @@ reason to drop and reconnect without logging detail.
 
 ## Auditing it yourself
 
-1. **Read the host side.** The files above are the whole trust boundary. The
-   only module that writes to the network is `relay_client.py`; everything it
-   sends is either Noise ciphertext or one of two tiny control frames.
+1. **Read the host side.** `relay_client.py` sends the encrypted session stream
+   and routing control frames. The optional `push.py` sends bounded HTTPS push
+   registration/deletion/generic-wake requests; `session_lease.py` observes live
+   controller events and `admission.py` binds push registration to the admitted
+   device and authorization epoch. `update_check.py` separately checks release
+   metadata. No push request contains a session/profile/tool name or message.
 2. **Read the phone side.** The clients live in the Mercury repository:
    `shared/mercury-core/src/commonMain/kotlin/com/unsupportedpastels/mercury/core/relay/`
    (shared protocol, framing, and Noise state), plus the thin Android and iOS
@@ -80,14 +89,119 @@ skip in that case. To run them too, point `scripts/compat_gate.sh` at a Hermes
 source tree. Node.js 18+ is required to execute the desktop behavioral tests;
 without Node, those tests and the JavaScript syntax check explicitly skip.
 
+## Optional iOS push notifications
+
+Disabled by default. Set `MERCURY_RELAY_PUSH_ENABLED=1` in the plugin host's
+launch environment to opt in at its next normal lifecycle start. This uses the
+existing configured `relay_origin`, exact installation route, and host routing
+JWT issuer; **no Apple publisher `.p8` key belongs on the Hermes host**. The
+relay must separately have its sandbox APNs registry/sender configured.
+
+An admitted encrypted controller sees `capabilities.push_notifications_v1: true`
+in `relay.lease.attached` and `relay.status` only when the bridge is configured.
+`relay.push.register` accepts exactly `{device_token, environment}` (lowercase
+even-length hex, 32–200 characters; `environment: "sandbox"`) and returns
+`{registered: true, wake_handle}`. `relay.push.unregister` accepts `{}` and
+returns `{registered: false}`. Both are handled inside the plugin, not forwarded
+to the official Hermes gateway. Callers cannot choose a device ID or epoch.
+
+A registered device receives generic wakes for assistant `message.complete` and
+blocking approval/clarification/secure-input requests observed by its retained
+controller, including while attached-but-suspended or detached. Historical
+replay, interim/user/tool events, and interrupt sentinels do not wake it. The
+relay alert is “Mercury — An update is available. Open Mercury to continue.”
+The app must reconnect and retrieve actual state over the encrypted channel.
+This does not extend the existing detached lease TTL or keep controllers alive
+indefinitely, and it is not a host-wide session monitor.
+
+The host stores only random handles, device/epoch and canonical HTTPS origin /
+installation-route bindings, and revocation
+cleanup state in private `mercury-relay/push.json`; APNs device tokens are not
+persisted there. Revocation immediately fences queued/future wakes and cancels
+in-flight HTTP. Deletion failures retain cleanup tombstones, retried after
+60 seconds idle and at the next enabled lifecycle start **only when the binding
+matches the current origin and installation**. Changed-registry rows are fenced
+and persisted inactive before any network work. Their deletion remains blocked
+debt: the current routing-token provider is not authority to contact an old
+registry. Restoring the exact bound registry with its valid host issuer allows
+cleanup, never reactivation. No historical credentials are saved or replayed,
+and HTTP redirects are never followed. Unregister and drain cleanup before
+changing registry when possible. Already accepted
+HTTP/APNs notifications cannot be recalled. The queue is capped at 64 jobs,
+registry at 64 rows, dedup at 256 event identities, and each HTTPS operation at
+5 seconds. Wakes are best effort (dropped on overload/failure), not an audit log.
+Unregister before disabling push if remote registration cleanup is required.
+
+**Migration from v1 push state:** v1 rows did not record their origin or route.
+They migrate to inactive v2 tombstones with null bindings; the plugin never
+guesses their destination, wakes them, or submits their handles to any registry.
+Devices must register again to obtain new bound handles. New registrations work
+alongside this debt until the shared 64-row cap is reached (`rate_limited`);
+blocked debt is never silently evicted. The owner must reconcile unknown legacy
+registrations with the original registry operator using independently verified
+destination/authorization information before retiring their local tombstones.
+Do not fill in guessed bindings or delete the state file to bypass cleanup.
+The bounded state read is 128 KiB to accommodate 64 full v2 records, including
+escaped device identifiers; the queue and registry caps are unchanged.
+
+Offline harness (real Noise admission/framing, fake Hermes controller and HTTP
+peer; no Apple/Cloudflare connection or credentials):
+
+```bash
+scripts/compat_gate.sh tests/test_push.py tests/test_push_lifecycle.py tests/test_push_binding.py
+scripts/compat_gate.sh  # full suite, including required Hermes contract tests
+```
+
+Use `HERMES_AGENT_ROOT` / `HERMES_PYTHON` to point that gate at a compatible
+Hermes checkout/interpreter. Standalone: `uv run pytest -q tests/test_push.py`
+(the default suite permits missing-Hermes contract tests to skip).
+
+For an isolated loopback Wrangler gate, reuse `tests/test_push.py` rather than
+starting/restarting a shared Hermes process. `admitted_peer(temp_path,
+handler=forward)` returns `(service, runtime, admitted, rpc, requests, status,
+offer)` after real Noise admission; `rpc` uses encrypted framing, not a direct
+bridge call. Its real `PushBridge` uses `https://relay.example` and an injected
+`httpx.MockTransport`; only the test HTTP peer redirects the bytes to loopback:
+
+```python
+# Inside an async test with a lifecycle-owned httpx.AsyncClient named loopback:
+async def forward(request):
+    return await loopback.post(
+        "http://127.0.0.1:8787" + request.url.path,
+        content=request.content,
+        headers={"Authorization": request.headers["Authorization"],
+                 "Content-Type": "application/json"},
+    )
+```
+
+Use a temporary `profile_paths` root. The helper generates its test installation
+and signing key via `RoutingIssuerStore(service.repository.store).load_or_create()`;
+that issuer's `machine_id(offer.installation_id)` and `public_key_b64url` provide
+the local Worker's test allowlist/key inputs. Configure those before calling
+`rpc("relay.push.register", ...)`. Then `emit_and_drain(admitted, service.push,
+event("message.start"), event("message.complete", {"text": "test answer"}))`
+exercises the production retained lease reader through authenticated Worker HTTP.
+`emit_and_drain` also accepts `event("clarify.request", {"request_id": "test"})`.
+Always `await service.close()` and `await runtime.close()` in `finally`. This
+transport injection leaves production HTTPS/origin/redirect checks unchanged;
+it is test-only and does not validate delivery to Apple or a physical device.
+
 ## Install
 
 Requirements: a macOS, Linux, or Windows host running Hermes Agent with the
 web dashboard, Python 3.11 to 3.13, and `git` on `PATH` (Hermes clones this
 repository with git and does not bundle it; options 1 and 2 below fail with
 `git is not installed or not in PATH` without it). The `cryptography` package
-ships with Hermes. The Noise implementation and the QR generator are vendored under
-`src/mercury_relay_plugin/_vendor/` so there is no pip step on the host.
+ships with Hermes; optional push also requires `httpx==0.28.1`, declared in both
+`plugin.yaml` and `pyproject.toml`. Supported Hermes installs already include
+`httpx[socks]==0.28.1` as a mandatory dependency. Hermes checks declared Python
+**distribution presence** (not version compatibility) and warns with an install
+hint; it does **not** auto-install them.
+On a stripped/custom environment, restore the declared dependencies in the
+interpreter running Hermes (not an unrelated system Python). Missing push
+dependencies fail bridge setup closed without disabling the ciphertext connector.
+The Noise implementation and QR generator are vendored under
+`src/mercury_relay_plugin/_vendor/`; supported Hermes installs need no extra pip step.
 
 On POSIX hosts the plugin keeps its keys and state in `0600` files inside a
 `0700` directory and opens them relative to a pinned directory descriptor with

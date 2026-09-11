@@ -9,6 +9,7 @@ description = "Server-side Hermes plugin foundation for Mercury Relay"
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "cryptography==50.0.1",
+    "httpx==0.28.1",
 ]
 
 [dependency-groups]

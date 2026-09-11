@@ -19,6 +19,15 @@ def test_plugin_manifest_is_opt_in_backend() -> None:
     assert "hooks" not in manifest
 
 
+def test_push_dependency_declared_for_git_and_package_installs() -> None:
+    import tomllib
+
+    manifest = yaml.safe_load((PLUGIN_ROOT / "plugin.yaml").read_text())
+    project = tomllib.loads((PLUGIN_ROOT / "pyproject.toml").read_text())
+    requirement = next(d for d in project["project"]["dependencies"] if d.startswith("httpx=="))
+    assert requirement in manifest["python_dependencies"]
+
+
 def test_dashboard_manifest_mounts_backend_api_and_management_ui() -> None:
     manifest = json.loads((PLUGIN_ROOT / "dashboard" / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["name"] == "mercury-relay"

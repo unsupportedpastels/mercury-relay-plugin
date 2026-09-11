@@ -85,6 +85,23 @@ def _default_connector_provider(admission: DeviceAdmissionService):
         token_provider=lambda: issuer.mint_host_token(identity.installation_id),
         journal=admission.journal,
     )
+    import os
+
+    if os.environ.get("MERCURY_RELAY_PUSH_ENABLED") == "1":
+        try:
+            from mercury_relay_plugin.push import PushBridge
+
+            admission.push = PushBridge(
+                paths=admission.repository.paths,
+                relay_origin=relay_origin,
+                installation_id=identity.installation_id,
+                token_provider=lambda: issuer.mint_host_token(identity.installation_id),
+                authorized=lambda device, epoch: admission._epoch(device) == epoch,
+            )
+            admission.push.start()
+        except Exception:
+            # Optional push must not strand existing ciphertext clients.
+            admission.push = None
     return RelayConnectorService(
         admission, connector, routing_issuer=issuer, journal=admission.journal
     )

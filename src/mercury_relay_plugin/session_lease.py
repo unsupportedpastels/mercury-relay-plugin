@@ -249,6 +249,7 @@ class SessionLease:
         recovery_projection: RecoveryProjection | None = None,
         authorization_epoch: int | None = None,
         routing_token_provider: Callable[[], str | None] | None = None,
+        push_bridge=None,
     ) -> None:
         if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
             raise ValueError("invalid device identifier")
@@ -262,6 +263,12 @@ class SessionLease:
             raise TypeError("on_release must be callable")
         if not isinstance(channel, str) or len(channel) > 64:
             raise ValueError("invalid lease channel")
+        self._push_bridge = push_bridge
+        self._push_observer = None
+        if push_bridge is not None:
+            from .push import PushObserver
+
+            self._push_observer = PushObserver(push_bridge, device_id, authorization_epoch)
         self.device_id = device_id
         # One device may hold one lease per channel (one per open session);
         # "" is the legacy default channel.
@@ -392,6 +399,9 @@ class SessionLease:
         self.last_seq += 1
         size = len(text.encode("utf-8"))
         now = self._clock()
+        if self._push_observer is not None:
+            with contextlib.suppress(Exception):
+                self._push_observer.observe(text)
         self._record_outcome(text)
         self.recovery_projection.observe(text)
         self._ring.append(
@@ -482,6 +492,11 @@ class SessionLease:
                 "method": "relay.lease.attached",
                 "params": {
                     **({"relay_token": relay_token} if relay_token else {}),
+                    **(
+                        {"capabilities": {"push_notifications_v1": True}}
+                        if self._push_bridge is not None and self._push_bridge.available
+                        else {}
+                    ),
                     "last_seq": self.last_seq,
                     "replay_gap": gap,
                     "replayed_from": replay[0].lease_seq if replay else None,
@@ -538,7 +553,8 @@ class SessionLease:
             value = None
         if (
             isinstance(value, Mapping)
-            and value.get("method") in RELAY_LOCAL_METHODS
+            and value.get("method")
+            in (RELAY_LOCAL_METHODS | {"relay.push.register", "relay.push.unregister"})
             and self._read_dispatcher is not None
         ):
             if value.get("method") in RELAY_MUTATION_METHODS:

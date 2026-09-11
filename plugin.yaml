@@ -7,8 +7,9 @@ kind: backend
 # installer) still rejects anything above 1.
 manifest_version: 1
 api_version: 1
-# cryptography ships with Hermes itself; the pinned pure-Python Noise runtime
+# cryptography and httpx ship with supported Hermes; the pure-Python Noise runtime
 # is vendored under src/mercury_relay_plugin/_vendor/ so installation needs no
 # pip step (Hermes never auto-installs plugin dependencies).
 python_dependencies:
   - "cryptography>=50.0,<51"
+  - "httpx==0.28.1"
