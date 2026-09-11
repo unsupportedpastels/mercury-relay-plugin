@@ -35,6 +35,40 @@ def test_failed_push_setup_does_not_disable_ciphertext_connector(tmp_path, monke
     asyncio.run(run())
 
 
+def test_missing_httpx_import_keeps_ciphertext_connector(tmp_path, monkeypatch):
+    async def run():
+        import builtins
+        import sys
+
+        service, runtime, _, _, _, _, _ = await admitted_peer(tmp_path, enabled=False)
+        try:
+            api = contract_import("dashboard.plugin_api")
+            monkeypatch.setenv("MERCURY_RELAY_PUSH_ENABLED", "1")
+            original = builtins.__import__
+            missing = []
+
+            def without_httpx(name, globals=None, locals=None, fromlist=(), level=0):
+                if name == "httpx" and (globals or {}).get("__name__") == (
+                    "mercury_relay_plugin.push"
+                ):
+                    missing.append(name)
+                    raise ModuleNotFoundError("No module named 'httpx'")
+                return original(name, globals, locals, fromlist, level)
+
+            monkeypatch.delitem(sys.modules, "mercury_relay_plugin.push")
+            monkeypatch.setattr(builtins, "__import__", without_httpx)
+            connector = api._default_connector_provider(service)
+            assert missing == ["httpx"]
+            assert connector is not None
+            assert service.push is None
+            await connector.close()
+        finally:
+            await service.close()
+            await runtime.close()
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("enabled", [None, "0", "true", "1"])
 def test_production_opt_in_reuses_origin_and_host_issuer(tmp_path, monkeypatch, enabled):
     async def run():

@@ -24,6 +24,7 @@ from .state_store import _atomic_write, _read_bounded
 from .strict_json import loads_strict
 
 MAX_ROWS = 64
+MAX_STATE_BYTES = 128 * 1024
 QUEUE_SIZE = 64
 TIMEOUT = 5.0
 INPUT_EVENTS = frozenset(
@@ -40,6 +41,24 @@ _HANDLE = re.compile(r"[A-Za-z0-9_-]{43}")
 _TOKEN = re.compile(r"[0-9a-f]{32,200}")
 
 
+def _push_origin(value):
+    origin = canonicalize_relay_origin(value)
+    authority = origin.split("://", 1)[1]
+    if authority.endswith(":443"):
+        authority = authority[:-4]
+    return "https://" + authority
+
+
+def _binding_valid(row):
+    origin, route = row["origin"], row["route"]
+    if origin is None or route is None:
+        return origin is None and route is None and not row["active"]
+    if not isinstance(route, str) or not _HANDLE.fullmatch(route):
+        return False
+    canonical_route = base64.urlsafe_b64encode(base64.urlsafe_b64decode(route + "=")).decode()
+    return canonical_route.rstrip("=") == route and _push_origin(origin) == origin
+
+
 class PushBridge:
     def __init__(
         self,
@@ -54,9 +73,10 @@ class PushBridge:
     ):
         if not isinstance(installation_id, bytes) or len(installation_id) != 32:
             raise ValueError("invalid installation")
-        origin = canonicalize_relay_origin(relay_origin)
+        origin = _push_origin(relay_origin)
         route = base64.urlsafe_b64encode(installation_id).decode("ascii").rstrip("=")
-        self.url = "https://" + origin.split("://", 1)[1] + f"/v1/push/{route}"
+        self.origin, self.route = origin, route
+        self.url = origin + f"/v1/push/{route}"
         self.token_provider = token_provider
         self.authorized = authorized
         self.timeout = timeout
@@ -71,22 +91,30 @@ class PushBridge:
         self._http_handle = None
         self._seen = OrderedDict()
         try:
-            data = loads_strict(_read_bounded(self.path, 32 * 1024).decode("utf-8"))
+            data = loads_strict(_read_bounded(self.path, MAX_STATE_BYTES).decode("utf-8"))
         except FileNotFoundError:
-            data = {"version": 1, "rows": {}}
+            data = {"version": 2, "rows": {}}
         if (
             not isinstance(data, dict)
             or set(data) != {"version", "rows"}
-            or data["version"] != 1
+            or type(data["version"]) is not int
+            or data["version"] not in {1, 2}
             or not isinstance(data["rows"], dict)
             or len(data["rows"]) > MAX_ROWS
         ):
             raise ValueError("invalid push state")
+        legacy = data["version"] == 1
+        dirty = legacy
         for handle, row in data["rows"].items():
             if (
                 not _HANDLE.fullmatch(handle)
                 or not isinstance(row, dict)
-                or set(row) != {"device", "epoch", "active"}
+                or set(row)
+                != (
+                    {"device", "epoch", "active"}
+                    if legacy
+                    else {"device", "epoch", "active", "origin", "route"}
+                )
                 or not isinstance(row["device"], str)
                 or not 1 <= len(row["device"]) <= 128
                 or type(row["epoch"]) is not int
@@ -94,7 +122,17 @@ class PushBridge:
                 or type(row["active"]) is not bool
             ):
                 raise ValueError("invalid push state")
+            if legacy:
+                # There is no evidence of the old destination: never guess it.
+                row = {**row, "active": False, "origin": None, "route": None}
+            if not _binding_valid(row):
+                raise ValueError("invalid push state")
             self.rows[handle] = row
+            if row["active"] and not self._valid(handle):
+                row["active"] = False
+                dirty = True
+        if dirty:
+            self._save()  # Persist fences even if this lifecycle never starts its worker.
         self._client = httpx.AsyncClient(
             transport=transport,
             timeout=timeout,
@@ -115,11 +153,20 @@ class PushBridge:
 
     def _valid(self, handle):
         row = self.rows.get(handle)
-        return bool(row and row["active"] and self._authorized(row["device"], row["epoch"]))
+        return bool(
+            row
+            and self._bound(row)
+            and row["active"]
+            and self._authorized(row["device"], row["epoch"])
+        )
+
+    def _bound(self, row):
+        # token_provider is scoped to this lifecycle, not to historical registries.
+        return row["origin"] == self.origin and row["route"] == self.route
 
     def _save(self):
         try:
-            _atomic_write(self.path, json.dumps({"version": 1, "rows": self.rows}).encode())
+            _atomic_write(self.path, json.dumps({"version": 2, "rows": self.rows}).encode())
         except Exception:
             self.failed = True
             raise SessionReadsError("push_unavailable") from None
@@ -195,7 +242,13 @@ class PushBridge:
             raise SessionReadsError("rate_limited")
         self.revoke(device)  # also remove any stale-epoch registration
         handle = secrets.token_urlsafe(32)
-        self.rows[handle] = {"device": device, "epoch": epoch, "active": True}
+        self.rows[handle] = {
+            "device": device,
+            "epoch": epoch,
+            "active": True,
+            "origin": self.origin,
+            "route": self.route,
+        }
         self._save()  # a lost response can still be revoked; token is memory-only
         future = asyncio.get_running_loop().create_future()
         if not self._enqueue(
@@ -235,6 +288,10 @@ class PushBridge:
             self._enqueue("wake", handle, {"event_id": secrets.token_urlsafe(32)})
 
     async def _post(self, action, handle, fields):
+        row = self.rows.get(handle)
+        if row is None or not self._bound(row):
+            # Keep blocked debt. Never mint/replay current credentials for it.
+            raise SessionReadsError("push_unavailable")
         # Fresh routing JWT per request, no redirect or unbounded response body.
         async with self._client.stream(
             "POST",

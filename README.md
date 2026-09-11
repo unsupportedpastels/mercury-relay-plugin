@@ -114,21 +114,41 @@ The app must reconnect and retrieve actual state over the encrypted channel.
 This does not extend the existing detached lease TTL or keep controllers alive
 indefinitely, and it is not a host-wide session monitor.
 
-The host stores only random handles, device/epoch bindings, and revocation
+The host stores only random handles, device/epoch and canonical HTTPS origin /
+installation-route bindings, and revocation
 cleanup state in private `mercury-relay/push.json`; APNs device tokens are not
 persisted there. Revocation immediately fences queued/future wakes and cancels
 in-flight HTTP. Deletion failures retain cleanup tombstones, retried after
-60 seconds idle and at the next enabled lifecycle start. Already accepted
+60 seconds idle and at the next enabled lifecycle start **only when the binding
+matches the current origin and installation**. Changed-registry rows are fenced
+and persisted inactive before any network work. Their deletion remains blocked
+debt: the current routing-token provider is not authority to contact an old
+registry. Restoring the exact bound registry with its valid host issuer allows
+cleanup, never reactivation. No historical credentials are saved or replayed,
+and HTTP redirects are never followed. Unregister and drain cleanup before
+changing registry when possible. Already accepted
 HTTP/APNs notifications cannot be recalled. The queue is capped at 64 jobs,
 registry at 64 rows, dedup at 256 event identities, and each HTTPS operation at
 5 seconds. Wakes are best effort (dropped on overload/failure), not an audit log.
 Unregister before disabling push if remote registration cleanup is required.
 
+**Migration from v1 push state:** v1 rows did not record their origin or route.
+They migrate to inactive v2 tombstones with null bindings; the plugin never
+guesses their destination, wakes them, or submits their handles to any registry.
+Devices must register again to obtain new bound handles. New registrations work
+alongside this debt until the shared 64-row cap is reached (`rate_limited`);
+blocked debt is never silently evicted. The owner must reconcile unknown legacy
+registrations with the original registry operator using independently verified
+destination/authorization information before retiring their local tombstones.
+Do not fill in guessed bindings or delete the state file to bypass cleanup.
+The bounded state read is 128 KiB to accommodate 64 full v2 records, including
+escaped device identifiers; the queue and registry caps are unchanged.
+
 Offline harness (real Noise admission/framing, fake Hermes controller and HTTP
 peer; no Apple/Cloudflare connection or credentials):
 
 ```bash
-scripts/compat_gate.sh tests/test_push.py tests/test_push_lifecycle.py
+scripts/compat_gate.sh tests/test_push.py tests/test_push_lifecycle.py tests/test_push_binding.py
 scripts/compat_gate.sh  # full suite, including required Hermes contract tests
 ```
 
@@ -172,9 +192,16 @@ Requirements: a macOS, Linux, or Windows host running Hermes Agent with the
 web dashboard, Python 3.11 to 3.13, and `git` on `PATH` (Hermes clones this
 repository with git and does not bundle it; options 1 and 2 below fail with
 `git is not installed or not in PATH` without it). The `cryptography` package
-ships with Hermes; optional push also uses `httpx` (declared in `pyproject.toml`,
-provided by supported Hermes environments). The Noise implementation and the QR generator are vendored under
-`src/mercury_relay_plugin/_vendor/` so there is no pip step on the host.
+ships with Hermes; optional push also requires `httpx==0.28.1`, declared in both
+`plugin.yaml` and `pyproject.toml`. Supported Hermes installs already include
+`httpx[socks]==0.28.1` as a mandatory dependency. Hermes checks declared Python
+**distribution presence** (not version compatibility) and warns with an install
+hint; it does **not** auto-install them.
+On a stripped/custom environment, restore the declared dependencies in the
+interpreter running Hermes (not an unrelated system Python). Missing push
+dependencies fail bridge setup closed without disabling the ciphertext connector.
+The Noise implementation and QR generator are vendored under
+`src/mercury_relay_plugin/_vendor/`; supported Hermes installs need no extra pip step.
 
 On POSIX hosts the plugin keeps its keys and state in `0600` files inside a
 `0700` directory and opens them relative to a pinned directory descriptor with
