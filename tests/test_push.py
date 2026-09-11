@@ -4,6 +4,7 @@ import asyncio
 import base64
 import hashlib
 import json
+import os
 import re
 import secrets
 
@@ -349,6 +350,7 @@ def test_revoke_cancels_inflight_and_queued_wakes_even_if_delete_fails(tmp_path)
             tmp_path, handler=handler
         )
         bridge = service.push
+        assert bridge is not None
         try:
             registered = (
                 await rpc(
@@ -380,7 +382,10 @@ def test_revoke_cancels_inflight_and_queued_wakes_even_if_delete_fails(tmp_path)
             assert sum(r.url.path.endswith("/wake") for r in requests) == 1
             assert any(r.url.path.endswith("/unregister") for r in requests)
             assert bridge.rows[handle]["active"] is False
-            assert (bridge.path.stat().st_mode & 0o777) == 0o600
+            # Windows stat() does not express POSIX permission bits. Keep
+            # the cross-platform revocation and cleanup checks running there.
+            if os.name == "posix":
+                assert (bridge.path.stat().st_mode & 0o777) == 0o600
             # Cleanup debt survives failure and retries on next lifecycle.
             from mercury_relay_plugin.push import PushBridge
 
