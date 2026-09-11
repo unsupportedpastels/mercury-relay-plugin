@@ -84,10 +84,16 @@ async def admitted_peer(tmp_path, *, enabled=True, handler=None):
     async def rpc(method, params):
         nonlocal counter
         counter += 1
-        text = json.dumps({"jsonrpc": "2.0", "id": counter, "method": method, "params": params})
-        for frame in encode_message(channel_id, counter.to_bytes(16, "big"), text.encode()):
+        request_id = counter
+        text = json.dumps(
+            {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+        )
+        for frame in encode_message(channel_id, request_id.to_bytes(16, "big"), text.encode()):
             await transport.feed_ciphertext(mobile.encrypt(frame))
-        return await asyncio.wait_for(read(), 2)
+        while True:
+            response = await asyncio.wait_for(read(), 2)
+            if response.get("id") == request_id:
+                return response
 
     status = await asyncio.wait_for(read(), 2)
     return service, runtime, admitted, rpc, requests, status, offer
@@ -110,7 +116,10 @@ def test_admitted_registration_and_detached_generic_wake(tmp_path):
     async def run():
         service, runtime, admitted, rpc, requests, status, offer = await admitted_peer(tmp_path)
         try:
-            assert status["params"]["capabilities"]["push_notifications_v1"] is True
+            assert status["params"]["capabilities"] == {
+                "push_notifications_v1": True,
+                "push_notifications_v2": True,
+            }
             result = (
                 await rpc(
                     "relay.push.register",
@@ -208,6 +217,9 @@ def test_input_completion_filter_turn_dedup_and_unregister(tmp_path):
             await rpc("relay.push.register", {"device_token": "cd" * 16, "environment": "sandbox"})
             assert (await rpc("relay.status", {}))["result"]["capabilities"][
                 "push_notifications_v1"
+            ]
+            assert (await rpc("relay.status", {}))["result"]["capabilities"][
+                "push_notifications_v2"
             ]
             good = event("message.complete", {"text": "answer", "status": "complete"})
             rejected = [
@@ -314,14 +326,19 @@ def test_disabled_older_client_has_no_push_capability_and_no_forwarding(tmp_path
         )
         try:
             assert "push_notifications_v1" not in attached["params"].get("capabilities", {})
+            assert "push_notifications_v2" not in attached["params"].get("capabilities", {})
             result = await rpc("relay.status", {})
             assert "push_notifications_v1" not in result["result"].get("capabilities", {})
+            assert "push_notifications_v2" not in result["result"].get("capabilities", {})
             assert (
                 await rpc(
                     "relay.push.register", {"device_token": "ab" * 32, "environment": "sandbox"}
                 )
             )["error"]["message"] == "push_unavailable"
             assert (await rpc("relay.push.unregister", {}))["error"][
+                "message"
+            ] == "push_unavailable"
+            assert (await rpc("relay.push.resolve", {"wake_handle": "x" * 43}))["error"][
                 "message"
             ] == "push_unavailable"
             assert requests == []

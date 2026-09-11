@@ -14,6 +14,7 @@ import hashlib
 import json
 import re
 import secrets
+import time
 from collections import OrderedDict
 
 import httpx
@@ -27,6 +28,8 @@ MAX_ROWS = 64
 MAX_STATE_BYTES = 128 * 1024
 QUEUE_SIZE = 64
 TIMEOUT = 5.0
+PENDING_ROUTE_TTL = 300.0
+MAX_PENDING_ROUTES = MAX_ROWS
 INPUT_EVENTS = frozenset(
     {
         "approval.request",
@@ -70,6 +73,7 @@ class PushBridge:
         authorized,
         transport=None,
         timeout=TIMEOUT,
+        clock=time.monotonic,
     ):
         if not isinstance(installation_id, bytes) or len(installation_id) != 32:
             raise ValueError("invalid installation")
@@ -80,6 +84,7 @@ class PushBridge:
         self.token_provider = token_provider
         self.authorized = authorized
         self.timeout = timeout
+        self.clock = clock
         paths.ensure()
         self.path = paths.agent_dir / "push.json"
         self.rows = {}
@@ -90,6 +95,9 @@ class PushBridge:
         self._http_task = None
         self._http_handle = None
         self._seen = OrderedDict()
+        # Memory-only, one latest route per opaque handle. Persistence would
+        # outlive the tap window and complicate epoch/revocation fencing.
+        self.pending_routes = OrderedDict()
         try:
             data = loads_strict(_read_bounded(self.path, MAX_STATE_BYTES).decode("utf-8"))
         except FileNotFoundError:
@@ -204,6 +212,42 @@ class PushBridge:
         for job in keep:
             self.queue.put_nowait(job)
 
+    def _clear_pending(self, handle, event_id=None):
+        pending = self.pending_routes.get(handle)
+        if pending is not None and (event_id is None or pending["event_id"] == event_id):
+            del self.pending_routes[handle]
+
+    def _prune_pending(self):
+        now = self.clock()
+        for handle, pending in list(self.pending_routes.items()):
+            if pending["expires_at"] <= now:
+                del self.pending_routes[handle]
+
+    def _resolve(self, device, epoch, handle):
+        self._prune_pending()
+        if not self._authorized(device, epoch):
+            return {"resolved": False}
+        row = self.rows.get(handle)
+        pending = self.pending_routes.get(handle)
+        if (
+            not row
+            or not pending
+            or not self._valid(handle)
+            or row["device"] != device
+            or row["epoch"] != epoch
+            or pending["device"] != device
+            or pending["epoch"] != epoch
+        ):
+            return {"resolved": False}
+        # Consume before constructing the response: no concurrent local RPC can
+        # retrieve this route twice, and failures cannot leave it reusable.
+        del self.pending_routes[handle]
+        return {
+            "resolved": True,
+            "durable_session_id": pending["durable_session_id"],
+            "profile": pending["profile"],
+        }
+
     def revoke(self, device, epoch=None):
         """Synchronous local fence; deletion is best effort and never reactivates."""
         dirty = False
@@ -211,6 +255,7 @@ class PushBridge:
             if row["device"] != device or (epoch is not None and row["epoch"] != epoch):
                 continue
             row["active"] = False
+            self._clear_pending(handle)
             self._drop_queued(handle)
             dirty = True
             if self._http_handle == handle and self._http_task is not None:
@@ -220,6 +265,15 @@ class PushBridge:
             self._save()
 
     async def dispatch(self, device, epoch, method, params):
+        if method == "relay.push.resolve":
+            handle = params.get("wake_handle")
+            if (
+                set(params) != {"wake_handle"}
+                or not isinstance(handle, str)
+                or not _HANDLE.fullmatch(handle)
+            ):
+                raise SessionReadsError("invalid_params")
+            return self._resolve(device, epoch, handle)
         if not self._authorized(device, epoch):
             raise SessionReadsError("push_unavailable")
         if method == "relay.push.unregister":
@@ -268,7 +322,7 @@ class PushBridge:
             raise SessionReadsError("push_unavailable")
         return {"registered": True, "wake_handle": handle}
 
-    def wake(self, device, epoch, identity):
+    def wake(self, device, epoch, identity, route=None):
         if not self._authorized(device, epoch):
             return
         handles = [
@@ -284,8 +338,35 @@ class PushBridge:
         self._seen[key] = None
         if len(self._seen) > 256:
             self._seen.popitem(last=False)
+        if not (
+            isinstance(route, dict)
+            and set(route) == {"durable_session_id", "profile"}
+            and isinstance(route["durable_session_id"], str)
+            and 1 <= len(route["durable_session_id"]) <= 128
+            and isinstance(route["profile"], str)
+            and 1 <= len(route["profile"]) <= 128
+        ):
+            route = None
         for handle in handles:
-            self._enqueue("wake", handle, {"event_id": secrets.token_urlsafe(32)})
+            event_id = secrets.token_urlsafe(32)
+            if not self._enqueue("wake", handle, {"event_id": event_id}):
+                self._clear_pending(handle)
+                continue
+            # A generic unbound wake invalidates any older route for the same
+            # handle, so resolving the tap can never disclose stale context.
+            self._clear_pending(handle)
+            if route is not None:
+                self.pending_routes[handle] = {
+                    "event_id": event_id,
+                    "device": device,
+                    "epoch": epoch,
+                    "durable_session_id": route["durable_session_id"],
+                    "profile": route["profile"],
+                    "expires_at": self.clock() + PENDING_ROUTE_TTL,
+                }
+                self.pending_routes.move_to_end(handle)
+                while len(self.pending_routes) > MAX_PENDING_ROUTES:
+                    self.pending_routes.popitem(last=False)
 
     async def _post(self, action, handle, fields):
         row = self.rows.get(handle)
@@ -338,6 +419,8 @@ class PushBridge:
             except SessionReadsError:
                 success = False
             finally:
+                if action == "wake" and not success:
+                    self._clear_pending(handle, fields.get("event_id"))
                 self._http_handle = self._http_task = None
                 if future is not None and not future.done():
                     if success and self._valid(handle):
@@ -363,14 +446,16 @@ class PushBridge:
             if future is not None and not future.done():
                 future.cancel()
             self.queue.task_done()
+        self.pending_routes.clear()
         await self._client.aclose()
 
 
 class PushObserver:
     """Observe only live retained controller output, never transcript/replay reads."""
 
-    def __init__(self, bridge, device, epoch):
+    def __init__(self, bridge, device, epoch, recovery_projection):
         self.bridge, self.device, self.epoch = bridge, device, epoch
+        self.recovery_projection = recovery_projection
         self.turns = OrderedDict()
         self.serial = 0
 
@@ -430,6 +515,15 @@ class PushObserver:
                 return
             # Only an opaque, local dedup digest reaches the bridge, never content.
             digest = hashlib.sha256(repr(identity).encode()).digest()
-            self.bridge.wake(self.device, self.epoch, digest)
+            binding = self.recovery_projection.binding_for_runtime(sid)
+            route = (
+                {
+                    "durable_session_id": binding["durable_session_id"],
+                    "profile": binding["profile"],
+                }
+                if binding
+                else None
+            )
+            self.bridge.wake(self.device, self.epoch, digest, route)
         except (ValueError, TypeError, AttributeError):
             return

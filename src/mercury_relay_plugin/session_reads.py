@@ -28,7 +28,10 @@ RELAY_READ_METHODS = frozenset(
     }
 )
 RELAY_FOLDER_METHODS = frozenset({"relay.folders.list", "relay.folders.create"})
-RELAY_LOCAL_METHODS = RELAY_READ_METHODS | RELAY_FOLDER_METHODS
+RELAY_PUSH_METHODS = frozenset(
+    {"relay.push.register", "relay.push.unregister", "relay.push.resolve"}
+)
+RELAY_LOCAL_METHODS = RELAY_READ_METHODS | RELAY_FOLDER_METHODS | RELAY_PUSH_METHODS
 RELAY_MUTATION_METHODS = frozenset({"relay.folders.create"})
 MAX_LIST_LIMIT = 100
 DEFAULT_LIST_LIMIT = 20
@@ -348,6 +351,7 @@ __all__ = [
     "RELAY_FOLDER_METHODS",
     "RELAY_LOCAL_METHODS",
     "RELAY_MUTATION_METHODS",
+    "RELAY_PUSH_METHODS",
     "RELAY_READ_METHODS",
     "SessionReads",
     "SessionReadsError",
