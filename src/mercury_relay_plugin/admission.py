@@ -8,6 +8,10 @@ import re
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .push import PushBridge
 
 from .authorization import (
     MAX_DEVICE_NAME_CHARS,
@@ -214,6 +218,7 @@ class DeviceAdmissionService:
             profile_authorizer=runtime.profile_authorizer,
             status_snapshot=runtime.snapshot,
         )
+        self.push: PushBridge | None = None
         self._admission_lock = asyncio.Lock()
         self._recovery_store: RecoveryStore | None = None
         # Set by the connector when a routing issuer exists: every attach then
@@ -485,7 +490,16 @@ class DeviceAdmissionService:
                     raise SessionReadsError("device_not_authorized")
 
             require_authorized()
-            result = await self.reads.dispatch(method, params)
+            if method in {"relay.push.register", "relay.push.unregister"}:
+                from .session_reads import SessionReadsError
+
+                if self.push is None or not self.push.available:
+                    raise SessionReadsError("push_unavailable")
+                result = await self.push.dispatch(device_id, epoch, method, params)
+            else:
+                result = await self.reads.dispatch(method, params)
+                if method == "relay.status" and self.push is not None and self.push.available:
+                    result.setdefault("capabilities", {})["push_notifications_v1"] = True
             require_authorized()
             return result
 
@@ -502,6 +516,7 @@ class DeviceAdmissionService:
             authorization_epoch=epoch,
             recovery_projection=projection,
             routing_token_provider=self.routing_token_provider,
+            push_bridge=self.push,
         )
         try:
             self.leases.register(lease)
@@ -534,6 +549,10 @@ class DeviceAdmissionService:
         """Revoke authorization and immediately release any live lease."""
 
         summary = self.repository.revoke(device_id)
+        if self.push is not None:
+            # Fence wakes even if worker deletion/persistence is unavailable.
+            with suppress(Exception):
+                self.push.revoke(device_id)
         try:
             await self.leases.release_device(device_id, reason="revoked")
             if self._recovery_store is not None:
@@ -552,6 +571,8 @@ class DeviceAdmissionService:
         """Release every retained lease exactly once at plugin shutdown."""
 
         await self.leases.close()
+        if self.push is not None:
+            await self.push.close()
         if self.metrics is not None:
             with suppress(Exception):
                 self.metrics.update_active_leases(0)
