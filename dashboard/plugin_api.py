@@ -36,6 +36,7 @@ from mercury_relay_plugin.management import (  # noqa: E402
 )
 from mercury_relay_plugin.routing_auth import RoutingIssuerStore  # noqa: E402
 from mercury_relay_plugin.runtime import RelayRuntime  # noqa: E402
+from mercury_relay_plugin.shutdown import await_cleanup, cleanup_steps  # noqa: E402
 from mercury_relay_plugin.strict_json import StrictJsonError, loads_strict  # noqa: E402
 # isort: on
 
@@ -153,12 +154,18 @@ async def _lifespan(_app: FastAPI):
         _updates = None
         _management = None
         connector, _connector = _connector, None
-        if connector is not None:
-            await connector.close()
         admission, _admission = _admission, None
+        steps = []
+        if task is not None:
+            # Intentional updater cancellation is not a shutdown failure, but
+            # its task must settle before the rest of the lifespan is released.
+            steps.append(lambda: asyncio.gather(task, return_exceptions=True))
+        if connector is not None:
+            steps.append(connector.close)
         if admission is not None:
-            await admission.close()
-        await runtime.close()
+            steps.append(admission.close)
+        steps.append(runtime.close)
+        await await_cleanup(asyncio.create_task(cleanup_steps(steps)))
 
 
 router = APIRouter(lifespan=_lifespan)

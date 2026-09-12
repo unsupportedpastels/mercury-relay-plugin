@@ -458,9 +458,10 @@ class RelayConnectorService:
                 await transport.feed_ciphertext(data)
 
         async def outbound() -> None:
-            while True:
-                for ciphertext in await transport.next_ciphertexts():
-                    await self._send_bounded(connection, ciphertext, connection_id=connection_id)
+            async def send(ciphertext: bytes) -> None:
+                await self._send_bounded(connection, ciphertext, connection_id=connection_id)
+
+            await transport.pump_outbound(send)
 
         pumps = [
             asyncio.create_task(inbound(), name="mercury-relay-inbound"),
