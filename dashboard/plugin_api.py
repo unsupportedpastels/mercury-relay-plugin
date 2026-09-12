@@ -97,6 +97,10 @@ def _default_connector_provider(admission: DeviceAdmissionService):
                 installation_id=identity.installation_id,
                 token_provider=lambda: issuer.mint_host_token(identity.installation_id),
                 authorized=lambda device, epoch: admission._epoch(device) == epoch,
+                preview_enabled=(
+                    config.get("push_previews") is True
+                    and os.environ.get("MERCURY_RELAY_PUSH_PREVIEW_ENABLED") == "1"
+                ),
             )
             admission.push.start()
         except Exception:

@@ -19,7 +19,9 @@ from mercury_relay_plugin.framing import Reassembler, encode_message
 from mercury_relay_plugin.secure_channel import NoiseChannel
 
 
-async def admitted_peer(tmp_path, *, enabled=True, handler=None):
+async def admitted_peer(
+    tmp_path, *, enabled=True, handler=None, preview_enabled=False, wall_clock=None
+):
     from mercury_relay_plugin.push import PushBridge
     from mercury_relay_plugin.routing_auth import RoutingIssuerStore
 
@@ -58,6 +60,8 @@ async def admitted_peer(tmp_path, *, enabled=True, handler=None):
             token_provider=lambda: issuer.mint_host_token(offer.installation_id),
             authorized=lambda d, e: service._epoch(d) == e,
             transport=httpx.MockTransport(peer),
+            preview_enabled=preview_enabled,
+            **({"wall_clock": wall_clock} if wall_clock is not None else {}),
         )
     mobile, host = channels()
     _handshake(mobile, host, final_payload=b"")
@@ -84,10 +88,16 @@ async def admitted_peer(tmp_path, *, enabled=True, handler=None):
     async def rpc(method, params):
         nonlocal counter
         counter += 1
-        text = json.dumps({"jsonrpc": "2.0", "id": counter, "method": method, "params": params})
-        for frame in encode_message(channel_id, counter.to_bytes(16, "big"), text.encode()):
+        request_id = counter
+        text = json.dumps(
+            {"jsonrpc": "2.0", "id": request_id, "method": method, "params": params}
+        )
+        for frame in encode_message(channel_id, request_id.to_bytes(16, "big"), text.encode()):
             await transport.feed_ciphertext(mobile.encrypt(frame))
-        return await asyncio.wait_for(read(), 2)
+        while True:
+            response = await asyncio.wait_for(read(), 2)
+            if response.get("id") == request_id:
+                return response
 
     status = await asyncio.wait_for(read(), 2)
     return service, runtime, admitted, rpc, requests, status, offer
@@ -110,7 +120,11 @@ def test_admitted_registration_and_detached_generic_wake(tmp_path):
     async def run():
         service, runtime, admitted, rpc, requests, status, offer = await admitted_peer(tmp_path)
         try:
-            assert status["params"]["capabilities"]["push_notifications_v1"] is True
+            assert status["params"]["capabilities"] == {
+                "push_notifications_v1": True,
+                "push_notifications_v2": True,
+                "push_notification_routes": {"version": 1, "inspect_method": "relay.push.inspect"},
+            }
             result = (
                 await rpc(
                     "relay.push.register",
@@ -208,6 +222,9 @@ def test_input_completion_filter_turn_dedup_and_unregister(tmp_path):
             await rpc("relay.push.register", {"device_token": "cd" * 16, "environment": "sandbox"})
             assert (await rpc("relay.status", {}))["result"]["capabilities"][
                 "push_notifications_v1"
+            ]
+            assert (await rpc("relay.status", {}))["result"]["capabilities"][
+                "push_notifications_v2"
             ]
             good = event("message.complete", {"text": "answer", "status": "complete"})
             rejected = [
@@ -314,14 +331,19 @@ def test_disabled_older_client_has_no_push_capability_and_no_forwarding(tmp_path
         )
         try:
             assert "push_notifications_v1" not in attached["params"].get("capabilities", {})
+            assert "push_notifications_v2" not in attached["params"].get("capabilities", {})
             result = await rpc("relay.status", {})
             assert "push_notifications_v1" not in result["result"].get("capabilities", {})
+            assert "push_notifications_v2" not in result["result"].get("capabilities", {})
             assert (
                 await rpc(
                     "relay.push.register", {"device_token": "ab" * 32, "environment": "sandbox"}
                 )
             )["error"]["message"] == "push_unavailable"
             assert (await rpc("relay.push.unregister", {}))["error"][
+                "message"
+            ] == "push_unavailable"
+            assert (await rpc("relay.push.resolve", {"wake_handle": "x" * 43}))["error"][
                 "message"
             ] == "push_unavailable"
             assert requests == []
@@ -381,7 +403,7 @@ def test_revoke_cancels_inflight_and_queued_wakes_even_if_delete_fails(tmp_path)
             await bridge.drain()
             assert sum(r.url.path.endswith("/wake") for r in requests) == 1
             assert any(r.url.path.endswith("/unregister") for r in requests)
-            assert bridge.rows[handle]["active"] is False
+            assert bridge.rows[handle]["status"] == "debt"
             # Windows stat() does not express POSIX permission bits. Keep
             # the cross-platform revocation and cleanup checks running there.
             if os.name == "posix":

@@ -102,6 +102,37 @@ def test_production_opt_in_reuses_origin_and_host_issuer(tmp_path, monkeypatch, 
     asyncio.run(run())
 
 
+def test_preview_capability_requires_sender_flag_and_public_config(tmp_path, monkeypatch):
+    async def run():
+        service, runtime, _, _, _, _, _ = await admitted_peer(tmp_path, enabled=False)
+        try:
+            api = contract_import("dashboard.plugin_api")
+            from mercury_relay_plugin.config import load_public_config, save_public_config
+
+            monkeypatch.setenv("MERCURY_RELAY_PUSH_ENABLED", "1")
+            monkeypatch.setenv("MERCURY_RELAY_PUSH_PREVIEW_ENABLED", "1")
+            config = load_public_config(service.repository.paths)
+            config["push_previews"] = True
+            save_public_config(service.repository.paths, config)
+            connector = api._default_connector_provider(service)
+            assert service.push is not None and service.push.preview_available
+            assert service.push.capabilities["push_previews"]["version"] == 1
+            await connector.close()
+            await service.push.close()
+            service.push = None
+
+            monkeypatch.delenv("MERCURY_RELAY_PUSH_PREVIEW_ENABLED")
+            connector = api._default_connector_provider(service)
+            assert service.push is not None and not service.push.preview_available
+            assert "push_previews" not in service.push.capabilities
+            await connector.close()
+        finally:
+            await service.close()
+            await runtime.close()
+
+    asyncio.run(run())
+
+
 def test_timeout_redirect_and_unauthorized_epoch_fail_closed(tmp_path):
     async def run():
         service, runtime, admitted, _, _, _, offer = await admitted_peer(tmp_path, enabled=False)

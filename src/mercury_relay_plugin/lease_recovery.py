@@ -263,6 +263,27 @@ class RecoveryProjection:
             self.pending.popitem(last=False)
             self.truncated = True
 
+    def binding_for_runtime(self, runtime_session_id):
+        """Return a proven live durable binding, never admission-profile inference."""
+
+        if not identifier(runtime_session_id):
+            return None
+        binding = self.bindings.get(runtime_session_id)
+        if (
+            not binding
+            or binding.get("runtime_session_id") != runtime_session_id
+            or not identifier(binding.get("durable_session_id"))
+            or not identifier(binding.get("profile"))
+            or binding.get("live") is not True
+        ):
+            return None
+        try:
+            if self.profile_authorizer(binding["profile"]) is not True:
+                return None
+        except Exception:
+            return None
+        return dict(binding)
+
     def observe(self, text):
         try:
             value = loads_strict(text)

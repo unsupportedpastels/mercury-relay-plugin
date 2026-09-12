@@ -37,7 +37,7 @@ from .session_lease import (
     SessionLeaseError,
     SessionLeaseManager,
 )
-from .session_reads import SessionReads
+from .session_reads import RELAY_PUSH_METHODS, SessionReads
 from .strict_json import loads_strict
 
 AUTH_ENVELOPE_TYPE = "controller.open"
@@ -490,7 +490,7 @@ class DeviceAdmissionService:
                     raise SessionReadsError("device_not_authorized")
 
             require_authorized()
-            if method in {"relay.push.register", "relay.push.unregister"}:
+            if method in RELAY_PUSH_METHODS:
                 from .session_reads import SessionReadsError
 
                 if self.push is None or not self.push.available:
@@ -499,7 +499,7 @@ class DeviceAdmissionService:
             else:
                 result = await self.reads.dispatch(method, params)
                 if method == "relay.status" and self.push is not None and self.push.available:
-                    result.setdefault("capabilities", {})["push_notifications_v1"] = True
+                    result.setdefault("capabilities", {}).update(self.push.capabilities)
             require_authorized()
             return result
 
