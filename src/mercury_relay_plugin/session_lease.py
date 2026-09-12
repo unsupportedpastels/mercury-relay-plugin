@@ -143,6 +143,7 @@ class LeaseAttachment:
         self._wakeup = asyncio.Event()
         self.detached = False
         self.detach_reason: str | None = None
+        self._outbound_tasks: set[asyncio.Task] = set()
 
     @property
     def lease(self) -> SessionLease:
@@ -157,7 +158,21 @@ class LeaseAttachment:
         self._live_bytes += size
         self._wakeup.set()
 
+    def register_outbound(self, task: asyncio.Task) -> None:
+        """Own publication through all outer transport awaits, not just encryption."""
+        if self.detached or self._lease.released:
+            raise SessionLeaseError("attachment_detached")
+        self._outbound_tasks.add(task)
+        self._lease._outbound_tasks.add(task)
+
+    def unregister_outbound(self, task: asyncio.Task) -> None:
+        self._outbound_tasks.discard(task)
+        self._lease._outbound_tasks.discard(task)
+
     def _mark_detached(self, reason: str) -> None:
+        for task in self._outbound_tasks:
+            if task is not asyncio.current_task() and not task.done() and not task.cancelling():
+                task.cancel()
         # An invalidated controller must not drain queued private replay/snapshots.
         if reason in {"lease_released", "attachment_replaced"}:
             self._preamble = None
@@ -304,6 +319,9 @@ class SessionLease:
         self.release_reason: str | None = None
         self._release_started = False
         self._release_done = asyncio.Event()
+        self._release_task: asyncio.Task[None] | None = None
+        self._release_succeeded = False
+        self._outbound_tasks: set[asyncio.Task] = set()
         self._pump_task: asyncio.Task[None] | None = None
         self._expiry_task: asyncio.Task[None] | None = None
 
@@ -329,11 +347,12 @@ class SessionLease:
         except asyncio.CancelledError:
             raise
         except VirtualWebSocketClosed:
-            # release() skips cancelling the task it runs inside, so the pump
-            # completes the full release inline before it finishes.
-            await self.release("controller_closed")
+            # Never join an external cleanup task that may be joining this pump.
+            if not self.released:
+                await self.release("controller_closed")
         except Exception:
-            await self.release("controller_failed")
+            if not self.released:
+                await self.release("controller_failed")
 
     def _schedule_expiry(self) -> None:
         self._cancel_expiry()
@@ -342,7 +361,8 @@ class SessionLease:
 
         async def expire() -> None:
             await asyncio.sleep(self.limits.detach_ttl_seconds)
-            await self.release("expired")
+            if not self.released:
+                await self.release("expired")
 
         self._expiry_task = asyncio.create_task(expire(), name="mercury-session-lease-expiry")
 
@@ -352,47 +372,67 @@ class SessionLease:
             task.cancel()
 
     async def release(self, reason: str = "released") -> bool:
-        """Release the inner controller exactly once; later calls are no-ops."""
+        """Fence immediately, then settle owned cleanup despite caller cancellation.
 
-        if self._release_started:
-            await self._release_done.wait()
-            return False
-        self._release_started = True
-        self.released = True
-        self.release_reason = reason
-        try:
-            self._cancel_expiry()
+        Cleanup failure takes precedence over cancellation and is replayed to
+        later callers. Only successful cleanup relinquishes registry ownership.
+        """
+        first = self._release_task is None
+        if first:
+            self._release_started = True
+            self.released = True
+            self.release_reason = reason
             attachment, self._attachment = self._attachment, None
             if attachment is not None:
                 attachment._mark_detached("lease_released")
-            pump = self._pump_task
-            if pump is not None and pump is not asyncio.current_task() and not pump.done():
-                pump.cancel()
-                await asyncio.gather(pump, return_exceptions=True)
-            reads = [task for task in self._read_tasks if not task.done()]
-            for task in reads:
-                task.cancel()
-            if reads:
-                await asyncio.gather(*reads, return_exceptions=True)
+            initiator = asyncio.current_task()
+            self._release_task = asyncio.create_task(
+                self._finish_release(initiator), name="mercury-session-lease-release"
+            )
+        assert self._release_task is not None
+        cancelled = False
+        while not self._release_task.done():
+            try:
+                await asyncio.shield(self._release_task)
+            except asyncio.CancelledError:
+                cancelled = True
+        # Retrieve the outcome even when cancellation races task completion.
+        self._release_task.result()
+        if cancelled:
+            raise asyncio.CancelledError
+        return first
+
+    async def _finish_release(self, initiator: asyncio.Task | None) -> None:
+        try:
+            expiry, self._expiry_task = self._expiry_task, None
+            tasks = set(self._read_tasks) | set(self._outbound_tasks)
+            tasks.update(task for task in (self._pump_task, expiry) if task is not None)
+            # Pump/expiry can themselves initiate release and await this task.
+            tasks.discard(initiator)
+            pending = [task for task in tasks if not task.done()]
+            for task in pending:
+                # Do not interrupt an invalidated sender's cancellation cleanup twice.
+                if not task.cancelling():
+                    task.cancel()
+            if pending:
+                await asyncio.gather(*pending, return_exceptions=True)
             self._read_tasks.clear()
+            self._outbound_tasks.clear()
             self._ring.clear()
             self._ring_bytes = 0
             self._submissions.clear()
+            self._mutations.clear()
             with contextlib.suppress(Exception):
                 await self.websocket.close(code=1000, reason="lease_released")
-            cleanup = asyncio.ensure_future(self._close_controller(self.controller_id))
             try:
-                await asyncio.shield(cleanup)
-            except asyncio.CancelledError:
-                await asyncio.gather(cleanup, return_exceptions=True)
-                raise
+                await self._close_controller(self.controller_id)
             except Exception:
                 raise SessionLeaseError("controller_release_failed") from None
-            return True
-        finally:
+            self._release_succeeded = True
             if self._on_release is not None:
                 with contextlib.suppress(Exception):
                     self._on_release()
+        finally:
             self._release_done.set()
 
     # -- retention -----------------------------------------------------------
@@ -857,23 +897,23 @@ class SessionLeaseManager:
 
     @property
     def active_count(self) -> int:
-        return sum(1 for lease in self._leases.values() if not lease.released)
+        return sum(1 for lease in self._leases.values() if not lease._release_succeeded)
 
     def get(self, device_id: str, channel: str = "") -> SessionLease | None:
         key = (device_id, channel)
         lease = self._leases.get(key)
-        if lease is not None and lease.released:
+        if lease is not None and lease._release_succeeded:
             del self._leases[key]
             return None
         return lease
 
     def leases_for(self, device_id: str) -> list[SessionLease]:
-        """Every live lease the device holds, across channels."""
+        """Every still-owned lease the device holds, across channels."""
 
         return [
             lease
             for (owner, _channel), lease in list(self._leases.items())
-            if owner == device_id and not lease.released
+            if owner == device_id and not lease._release_succeeded
         ]
 
     def register(self, lease: SessionLease) -> None:
@@ -883,7 +923,9 @@ class SessionLeaseManager:
             raise TypeError("lease must be a SessionLease")
         if self.get(lease.device_id, lease.channel) is not None:
             raise SessionLeaseError("device_already_leased")
-        self._leases = {key: item for key, item in self._leases.items() if not item.released}
+        self._leases = {
+            key: item for key, item in self._leases.items() if not item._release_succeeded
+        }
         if len(self._leases) >= self.max_leases:
             raise SessionLeaseError("lease_limit_reached")
         self._leases[(lease.device_id, lease.channel)] = lease
@@ -894,38 +936,41 @@ class SessionLeaseManager:
     ) -> bool:
         """Release exactly one (device, channel) lease."""
 
-        lease = self._leases.pop((device_id, channel), None)
+        lease = self.get(device_id, channel)
         if lease is None:
             return False
         return await lease.release(reason)
 
     async def release_device(self, device_id: str, *, reason: str = "released") -> bool:
-        """Release every lease the device holds (revocation, epoch change)."""
-
-        keys = [key for key in self._leases if key[0] == device_id]
-        released = False
-        failure: SessionLeaseError | None = None
-        for key in keys:
-            lease = self._leases.pop(key, None)
-            if lease is None:
-                continue
-            try:
-                released = await lease.release(reason) or released
-            except SessionLeaseError as error:
-                failure = error
-        if failure is not None:
-            raise failure
-        return released
+        """Release every owned channel, including any previously failed cleanup."""
+        return await self._release_all(self.leases_for(device_id), reason)
 
     async def close(self) -> None:
-        """Release every lease exactly once at plugin shutdown."""
-
+        """Fence all channels before waiting for any controller to close."""
         self.closed = True
-        leases = list(self._leases.values())
-        self._leases.clear()
-        for lease in leases:
-            with contextlib.suppress(SessionLeaseError):
-                await lease.release("plugin_shutdown")
+        await self._release_all(list(self._leases.values()), "plugin_shutdown")
+
+    async def _release_all(self, leases: list[SessionLease], reason: str) -> bool:
+        # Schedule all fences together. A slow controller must not leave sibling
+        # channels live, and cancellation must not abandon the remaining leases.
+        cleanup = asyncio.gather(
+            *(lease.release(reason) for lease in leases), return_exceptions=True
+        )
+        cancelled = False
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError:
+                cancelled = True
+        results = cleanup.result()
+        for result in results:
+            if isinstance(result, Exception):
+                raise result
+            if isinstance(result, asyncio.CancelledError):
+                cancelled = True
+        if cancelled:
+            raise asyncio.CancelledError
+        return any(result is True for result in results)
 
 
 __all__ = [

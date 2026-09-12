@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import secrets
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 
 from .framing import (
     CHANNEL_ID_SIZE,
@@ -203,6 +203,34 @@ class EncryptedControllerTransport:
             except Exception as error:
                 _diagnose_failure("outbound", error)
                 raise self._fail("local_hermes_unavailable") from None
+
+    async def pump_outbound(self, send: Callable[[bytes], Awaitable[None]]) -> None:
+        """Publish only while this exact attachment owns the send task.
+
+        Invalidation cancels through queue/lock/pacing waits inside ``send``.
+        Lease release joins the task before returning. Bytes already handed to
+        the socket cannot be retracted; unsent records must not be shielded by
+        an outer transport implementation.
+        """
+        task = asyncio.current_task()
+        assert task is not None
+        try:
+            self.attachment.register_outbound(task)
+            while True:
+                for ciphertext in await self.next_ciphertexts():
+                    if self.attachment.detached or self.attachment.lease.released:
+                        raise SessionLeaseError("attachment_detached")
+                    self._require_open()
+                    await send(ciphertext)
+        except asyncio.CancelledError:
+            if self.attachment.detached or self.attachment.lease.released:
+                reason = "lease_released" if self.attachment.lease.released else "channel_closed"
+                raise self._fail(reason) from None
+            raise
+        except SessionLeaseError:
+            raise self._fail("channel_closed") from None
+        finally:
+            self.attachment.unregister_outbound(task)
 
     def close(self, *, reason: str = "detached") -> None:
         """Close the outer channel and detach from the lease exactly once.

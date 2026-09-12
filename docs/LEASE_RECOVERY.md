@@ -116,6 +116,31 @@ survives. Plugin shutdown/restart does not resurrect children, pending approvals
 request state, or the controller. Durable terminal evidence is reconstruction of
 observations, not proof the rest of the task inventory is complete.
 
+## Outbound invalidation and cleanup ownership
+
+The connector publishes through an attachment-owned outbound pump. Replacing
+or detaching that attachment cancels its sender through queue, lock, and pacing
+waits; revoked leases cannot drain an already-encrypted unsent batch. Bytes
+already handed to the socket cannot be retracted. Outer transports must not
+shield unsent publication from cancellation.
+
+Release fences the lease first, then an owned cleanup task joins senders
+(including replaced attachments), reads/mutations, pump and expiry tasks before
+closing the inner controller. Repeated caller cancellation waits for cleanup to
+settle rather than abandoning it. Device-wide revocation and shutdown start all
+channel fences before waiting for a slow controller; explicit single-channel
+release leaves siblings alone.
+
+The registry retains a lease until controller cleanup succeeds. Failure stays
+sanitized as `controller_release_failed`, takes precedence over cancellation,
+and is replayed to later release callers without a second controller-close call.
+Failed cleanup continues to consume the lease slot and cannot be replaced by a
+fresh controller. This intentionally fails closed rather than claiming cleanup
+completed. Normal successful release remains idempotent.
+
+Pairing-history bounds and authorization-state migration are documented in
+[Revocation history](REVOCATION_HISTORY.md).
+
 ## Verification / activation
 
 Focused tests cover wrapper cursors/replay/watermarks, legacy exact frames,
