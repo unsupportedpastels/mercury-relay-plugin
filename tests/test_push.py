@@ -19,7 +19,9 @@ from mercury_relay_plugin.framing import Reassembler, encode_message
 from mercury_relay_plugin.secure_channel import NoiseChannel
 
 
-async def admitted_peer(tmp_path, *, enabled=True, handler=None):
+async def admitted_peer(
+    tmp_path, *, enabled=True, handler=None, preview_enabled=False, wall_clock=None
+):
     from mercury_relay_plugin.push import PushBridge
     from mercury_relay_plugin.routing_auth import RoutingIssuerStore
 
@@ -58,6 +60,8 @@ async def admitted_peer(tmp_path, *, enabled=True, handler=None):
             token_provider=lambda: issuer.mint_host_token(offer.installation_id),
             authorized=lambda d, e: service._epoch(d) == e,
             transport=httpx.MockTransport(peer),
+            preview_enabled=preview_enabled,
+            **({"wall_clock": wall_clock} if wall_clock is not None else {}),
         )
     mobile, host = channels()
     _handshake(mobile, host, final_payload=b"")
@@ -119,6 +123,7 @@ def test_admitted_registration_and_detached_generic_wake(tmp_path):
             assert status["params"]["capabilities"] == {
                 "push_notifications_v1": True,
                 "push_notifications_v2": True,
+                "push_notification_routes": {"version": 1, "inspect_method": "relay.push.inspect"},
             }
             result = (
                 await rpc(
@@ -398,7 +403,7 @@ def test_revoke_cancels_inflight_and_queued_wakes_even_if_delete_fails(tmp_path)
             await bridge.drain()
             assert sum(r.url.path.endswith("/wake") for r in requests) == 1
             assert any(r.url.path.endswith("/unregister") for r in requests)
-            assert bridge.rows[handle]["active"] is False
+            assert bridge.rows[handle]["status"] == "debt"
             # Windows stat() does not express POSIX permission bits. Keep
             # the cross-platform revocation and cleanup checks running there.
             if os.name == "posix":

@@ -283,6 +283,7 @@ _DEFAULT_PUBLIC_CONFIG: dict[str, Any] = {
     "schema_version": 1,
     "request_timeout_seconds": 30,
     "relay_origin": DEFAULT_RELAY_ORIGIN,
+    "push_previews": False,
 }
 
 
@@ -329,6 +330,8 @@ def validate_public_config(config: Mapping[str, Any], profile_id: str) -> dict[s
     # hours (plus on start). Off means the page only checks when asked.
     if "update_check" in value and not isinstance(value["update_check"], bool):
         raise ProfileConfigError("invalid update_check configuration")
+    if "push_previews" in value and type(value["push_previews"]) is not bool:
+        raise ProfileConfigError("invalid push_previews configuration")
     timeout = value.get("request_timeout_seconds")
     if timeout is not None and (timeout < 1 or timeout > 300):
         raise ProfileConfigError("invalid timeout configuration")

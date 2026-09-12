@@ -499,8 +499,7 @@ class DeviceAdmissionService:
             else:
                 result = await self.reads.dispatch(method, params)
                 if method == "relay.status" and self.push is not None and self.push.available:
-                    result.setdefault("capabilities", {})["push_notifications_v1"] = True
-                    result["capabilities"]["push_notifications_v2"] = True
+                    result.setdefault("capabilities", {}).update(self.push.capabilities)
             require_authorized()
             return result
 

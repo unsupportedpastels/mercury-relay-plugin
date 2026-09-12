@@ -118,48 +118,54 @@ session has no binding proven by the recovery projection. Pending routes are
 memory-only, capped at 64, expire after five minutes, and are cleared on
 revocation/unregister. Runtime session IDs never enter this response.
 
-A registered device receives generic wakes for assistant `message.complete` and
-blocking approval/clarification/secure-input requests observed by its retained
-controller, including while attached-but-suspended or detached. Historical
-replay, interim/user/tool events, and interrupt sentinels do not wake it. The
-relay alert is “Mercury — An update is available. Open Mercury to continue.”
-Push HTTP and APNs payloads remain content-free: only the opaque wake handle and
-a fresh random event ID are sent. Durable/profile routing exists only in the
-short-lived host-local pending route and its encrypted one-time response. An
-unbound event still sends the generic wake but deliberately resolves false. This
-does not extend the existing detached lease TTL or keep controllers alive
-indefinitely, and it is not a host-wide session monitor.
+A generic registered device receives content-free wakes for assistant
+`message.complete` and blocking approval/clarification/secure-input requests
+observed by its retained controller, including while attached-but-suspended or
+detached. Historical replay, interim/user/tool events, and interrupt sentinels
+do not wake it. The generic relay alert remains “Mercury — An update is
+available. Open Mercury to continue.” Durable/profile routing exists only in
+the short-lived host-local pending route and its encrypted one-time response.
+An unbound event still sends the generic wake but deliberately resolves false.
+This does not extend the existing detached lease TTL, keep controllers alive
+indefinitely, or create a host-wide session monitor.
 
-The host stores only random handles, device/epoch and canonical HTTPS origin /
-installation-route bindings, and revocation
-cleanup state in private `mercury-relay/push.json`; APNs device tokens are not
-persisted there. Revocation immediately fences queued/future wakes and cancels
-in-flight HTTP. Deletion failures retain cleanup tombstones, retried after
-60 seconds idle and at the next enabled lifecycle start **only when the binding
-matches the current origin and installation**. Changed-registry rows are fenced
-and persisted inactive before any network work. Their deletion remains blocked
-debt: the current routing-token provider is not authority to contact an old
-registry. Restoring the exact bound registry with its valid host issuer allows
-cleanup, never reactivation. No historical credentials are saved or replayed,
-and HTTP redirects are never followed. Unregister and drain cleanup before
-changing registry when possible. Already accepted
-HTTP/APNs notifications cannot be recalled. The queue is capped at 64 jobs,
-registry and pending-route map at 64 rows each, dedup at 256 event identities,
-and each HTTPS operation at 5 seconds. Wakes are best effort (dropped on
-overload/failure), not an audit log.
+Encrypted push-preview v1 is an additive, independently gated mode. It is dark
+unless public config has `push_previews: true` and the host launch environment
+has `MERCURY_RELAY_PUSH_PREVIEW_ENABLED=1`; the phone setting remains off by
+default. Accepted clients provision a per-device key only over the authenticated
+Noise channel. The Worker receives ciphertext and a random key ID, never the
+key or plaintext. See [`docs/PUSH_PREVIEWS.md`](docs/PUSH_PREVIEWS.md) for the
+frozen capability, schemas, AAD, bounds, preferences, extraction policy, and
+cross-language fixture.
+
+The host stores random handles, device/epoch, canonical HTTPS origin /
+installation-route bindings, and revocation cleanup state in private
+`mercury-relay/push.json`; active preview rows additionally store the scoped
+preview key and effective preferences. APNs device tokens are never persisted.
+Revocation immediately clears preview keys, fences queued/future wakes, and
+cancels in-flight HTTP. Deletion failures retain key-free cleanup tombstones,
+retried after 60 seconds idle and at the next enabled lifecycle start **only
+when the binding matches the current origin and installation**. Changed-registry
+rows are fenced and persisted before any network work. Their deletion remains
+blocked debt: the current routing-token provider is not authority to contact an
+old registry. Restoring the exact bound registry with its valid host issuer
+allows cleanup, never reactivation. No historical credentials are saved or
+replayed, and HTTP redirects are never followed. Unregister and drain cleanup
+before changing registry when possible. Already accepted HTTP/APNs
+notifications cannot be recalled. The queue is capped at 64 jobs, registry and
+pending-route map at 64 rows each, dedup at 256 event identities, every HTTPS
+operation at 5 seconds, and every serialized push request at 3072 bytes. Wakes
+are best effort (dropped on overload/failure), not an audit log.
 Unregister before disabling push if remote registration cleanup is required.
 
-**Migration from v1 push state:** v1 rows did not record their origin or route.
-They migrate to inactive v2 tombstones with null bindings; the plugin never
-guesses their destination, wakes them, or submits their handles to any registry.
-Devices must register again to obtain new bound handles. New registrations work
-alongside this debt until the shared 64-row cap is reached (`rate_limited`);
-blocked debt is never silently evicted. The owner must reconcile unknown legacy
-registrations with the original registry operator using independently verified
-destination/authorization information before retiring their local tombstones.
-Do not fill in guessed bindings or delete the state file to bypass cleanup.
-The bounded state read is 128 KiB to accommodate 64 full v2 records, including
-escaped device identifiers; the queue and registry caps are unchanged.
+**Migration from v1/v2 push state:** v1 rows did not record their origin or
+route. They migrate to key-free schema-v3 tombstones with null bindings; the
+plugin never guesses their destination, wakes them, or submits their handles to
+any registry. V2 bound generic rows migrate to schema v3 without changing their
+active delivery or v2 tap-resolution behavior. Devices must register again for
+legacy unbound handles. New registrations work alongside blocked debt until the
+shared 64-row cap is reached (`rate_limited`); blocked debt is never silently
+evicted. The bounded state read remains 128 KiB.
 
 Offline harness (real Noise admission/framing, fake Hermes controller and HTTP
 peer; no Apple/Cloudflare connection or credentials):

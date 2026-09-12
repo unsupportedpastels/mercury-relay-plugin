@@ -29,7 +29,13 @@ RELAY_READ_METHODS = frozenset(
 )
 RELAY_FOLDER_METHODS = frozenset({"relay.folders.list", "relay.folders.create"})
 RELAY_PUSH_METHODS = frozenset(
-    {"relay.push.register", "relay.push.unregister", "relay.push.resolve"}
+    {
+        "relay.push.register",
+        "relay.push.preview.register",
+        "relay.push.unregister",
+        "relay.push.resolve",
+        "relay.push.inspect",
+    }
 )
 RELAY_LOCAL_METHODS = RELAY_READ_METHODS | RELAY_FOLDER_METHODS | RELAY_PUSH_METHODS
 RELAY_MUTATION_METHODS = frozenset({"relay.folders.create"})

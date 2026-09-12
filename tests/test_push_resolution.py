@@ -40,6 +40,7 @@ def test_bound_completion_and_input_resolve_once_over_encrypted_channel(tmp_path
             assert attached["params"]["capabilities"] == {
                 "push_notifications_v1": True,
                 "push_notifications_v2": True,
+                "push_notification_routes": {"version": 1, "inspect_method": "relay.push.inspect"},
             }
             handle = (await rpc("relay.push.register", REGISTER))["result"]["wake_handle"]
             await bind_runtime(rpc, admitted.lease.websocket)

@@ -48,7 +48,7 @@ def test_changed_registry_blocks_debt_and_never_revives_on_return(tmp_path, orig
             new.wake("device", 0, b"changed")
             await new.drain()
             assert calls == []
-            assert new.rows[handle]["active"] is False
+            assert new.rows[handle]["status"] == "debt"
             fresh = await new.dispatch("device", 0, "relay.push.register", PARAMS)
             new.wake("device", 0, b"fresh")
             await new.drain()
@@ -112,9 +112,11 @@ def test_legacy_unbound_is_permanent_blocked_debt_but_new_registration_works(tmp
                 bridge.wake("device", 0, b"legacy")
                 await bridge.drain()
                 assert not any(json.loads(r.content)["wake_handle"] == handle for r in calls)
-                fresh = await bridge.dispatch("device", 0, "relay.push.register", PARAMS)
+                fresh = await asyncio.wait_for(
+                    bridge.dispatch("device", 0, "relay.push.register", PARAMS), 2
+                )
                 assert fresh["registered"]
-                assert bridge.rows[handle]["active"] is False
+                assert bridge.rows[handle]["status"] == "debt"
                 assert bridge.rows[handle]["origin"] is None
                 assert bridge.rows[handle]["route"] is None
             finally:
@@ -176,7 +178,9 @@ def test_full_v2_state_roundtrip_and_blocked_debt_never_mints(tmp_path):
             bridge.token_provider = lambda: mints.append(True) or "offline-token"
             try:
                 # Construction alone durably fences before start/close.
-                assert all(not r["active"] for r in json.loads(path.read_text())["rows"].values())
+                assert all(
+                    r["status"] == "debt" for r in json.loads(path.read_text())["rows"].values()
+                )
                 await bridge.drain()
                 assert len(bridge.rows) == MAX_ROWS
                 assert not calls and not mints
@@ -203,7 +207,7 @@ def test_matching_debt_without_auth_remains_blocked(tmp_path):
             bridge.revoke("device")
             await bridge.drain()
             assert not calls
-            assert not bridge.rows[handle]["active"]
+            assert bridge.rows[handle]["status"] == "debt"
         finally:
             await bridge.close()
 

@@ -495,12 +495,7 @@ class SessionLease:
                 "params": {
                     **({"relay_token": relay_token} if relay_token else {}),
                     **(
-                        {
-                            "capabilities": {
-                                "push_notifications_v1": True,
-                                "push_notifications_v2": True,
-                            }
-                        }
+                        {"capabilities": self._push_bridge.capabilities}
                         if self._push_bridge is not None and self._push_bridge.available
                         else {}
                     ),
