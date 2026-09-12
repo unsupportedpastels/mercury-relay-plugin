@@ -23,6 +23,7 @@ from .push_preview import (
     MAX_ROUTE_PROFILE_BYTES,
     MAX_ROUTE_SESSION_BYTES,
     PREVIEW_CAPABILITY,
+    PREVIEW_TTL_SECONDS,
     build_preview_plaintext,
     canonical_b64url,
     decode_canonical_b64url,
@@ -575,6 +576,7 @@ class PushBridge:
                 if kind not in {"completion", "attention"} or not record[preference]:
                     continue
                 try:
+                    issued_at = int(self.wall_clock())
                     plaintext = build_preview_plaintext(
                         kind=kind,
                         attention_kind=preview_data.get("attention_kind"),
@@ -583,7 +585,7 @@ class PushBridge:
                         include_title=record["include_title"],
                         include_response_excerpt=record["include_response_excerpt"],
                         route=route,
-                        now=int(self.wall_clock()),
+                        now=issued_at,
                     )
                     nonce = secrets.token_bytes(12)
                     ciphertext = encrypt_preview(
@@ -602,12 +604,12 @@ class PushBridge:
                         "nonce": canonical_b64url(nonce),
                         "ciphertext": ciphertext,
                     }
+                    fields["_preview_expires_at"] = issued_at + PREVIEW_TTL_SECONDS
                 except (ValueError, TypeError):
                     fields.clear()
                     continue
             if not self._enqueue("wake", handle, fields):
                 fields.clear()
-                self._clear_pending(handle)
                 continue
             self._clear_pending(handle)
             if route is not None:
@@ -630,6 +632,12 @@ class PushBridge:
     async def _post(self, action, handle, fields):
         row = self.rows.get(handle)
         if row is None or not self._bound(row):
+            raise SessionReadsError("push_unavailable")
+        # Keep only ciphertext in the queue. Drop stale previews at the send
+        # boundary, reserving the entire HTTP timeout, rather than retaining
+        # plaintext for a later rebuild. This metadata must never leave the host.
+        expires_at = fields.pop("_preview_expires_at", None)
+        if expires_at is not None and self.wall_clock() + self.timeout >= expires_at:
             raise SessionReadsError("push_unavailable")
         payload = json.dumps(
             {"wake_handle": handle, **fields},
