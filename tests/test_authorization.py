@@ -298,6 +298,172 @@ def test_pruning_retains_revoked_records_and_blocks_revoked_keys(tmp_path: Path)
         repo.consume_offer(offer.capability, revoked_key, device_key(202))
 
 
+def test_revoked_history_compacts_without_forgetting_keys(tmp_path: Path) -> None:
+    from mercury_relay_plugin.authorization import MAX_DEVICE_RECORDS
+
+    paths = make_paths(tmp_path)
+    repo = AuthorizationRepository(paths, clock=lambda: 1000)
+    revoked = []
+    for index in range(MAX_DEVICE_RECORDS + 4):
+        offer = repo.create_offer()
+        key = device_key(index + 1)
+        pending = repo.consume_offer(offer.capability, key, device_key(90))
+        repo.revoke(pending.device_id)
+        revoked.append((pending.device_id, key))
+        repo = AuthorizationRepository(paths, clock=lambda: 1000)
+
+    assert len(repo.list_devices()) <= MAX_DEVICE_RECORDS
+    offer = repo.create_offer()
+    for identifier, key in revoked:
+        assert not repo.is_authorized(identifier, key)
+        with pytest.raises(PairingRejected):
+            repo.consume_offer(offer.capability, key, device_key(91))
+    assert repo.consume_offer(offer.capability, device_key(100), device_key(92)).status == "pending"
+
+
+def test_compaction_preserves_active_metadata_and_owner_offer_supersession(tmp_path: Path) -> None:
+    from mercury_relay_plugin.authorization import MAX_DEVICE_RECORDS
+
+    paths = make_paths(tmp_path)
+    repo = AuthorizationRepository(paths, clock=lambda: 1000)
+    offer = repo.create_offer()
+    pending = repo.consume_offer(offer.capability, device_key(100), device_key(90))
+    approved = repo.approve(pending.device_id, hashlib.sha256(device_key(90)).digest())
+    assert repo.note_device_name(approved.device_id, device_key(100), "Fixture phone")
+    repo.set_label(approved.device_id, "Fixture nickname")
+    for index in range(MAX_DEVICE_RECORDS):
+        offer = repo.create_offer()
+        old = repo.consume_offer(offer.capability, device_key(index + 1), device_key(90))
+        repo.revoke(old.device_id)
+    assert StateStore(paths).load()["schema_version"] == 2
+    repo = AuthorizationRepository(paths, clock=lambda: 1000)
+    summary = next(item for item in repo.list_devices() if item.device_id == approved.device_id)
+    assert summary.device_name == "Fixture phone"
+    assert summary.label == "Fixture nickname"
+    assert summary.epoch == approved.epoch
+    assert repo.is_authorized(approved.device_id, device_key(100))
+    old_offer = repo.create_offer()
+    new_offer = repo.create_offer()
+    with pytest.raises(PairingRejected):
+        repo.consume_offer(old_offer.capability, device_key(101), device_key(90))
+    new_pending = repo.consume_offer(new_offer.capability, device_key(101), device_key(90))
+    assert new_pending.status == "pending"
+
+
+def test_compaction_upgrades_legacy_state_only_when_needed(tmp_path: Path) -> None:
+    from mercury_relay_plugin.authorization import MAX_DEVICE_RECORDS
+
+    paths = make_paths(tmp_path)
+    repo = AuthorizationRepository(paths, clock=lambda: 1000)
+    for index in range(MAX_DEVICE_RECORDS + 1):
+        offer = repo.create_offer()
+        pending = repo.consume_offer(offer.capability, device_key(index + 1), device_key(90))
+        repo.revoke(pending.device_id)
+        if index < MAX_DEVICE_RECORDS:
+            assert StateStore(paths).load()["schema_version"] == 1
+    state = StateStore(paths).load()
+    # Old StateStore readers reject schema 2 before touching any key evidence.
+    assert state["schema_version"] == 2
+    assert state["revoked_key_digests"]
+    identity = HostIdentityStore(paths).load_or_create()
+    assert identity.public_key == repo.create_offer().host_public_key
+    state["schema_version"] = 1
+    StateStore(paths).save(state)
+    with pytest.raises(AuthorizationError, match="authorization state invalid"):
+        repo.list_devices()
+
+
+def test_evidence_saturation_preserves_revocation_and_reports_owner_recovery(
+    tmp_path: Path,
+) -> None:
+    import mercury_relay_plugin.authorization as authorization
+    from mercury_relay_plugin.state_store import MAX_STATE_BYTES
+
+    paths = make_paths(tmp_path)
+    repo = AuthorizationRepository(paths, clock=lambda: 1000)
+    count = authorization.MAX_DEVICE_RECORDS + authorization.MAX_REVOKED_KEY_DIGESTS
+    revoked = []
+    pending = None
+    for index in range(count):
+        offer = repo.create_offer()
+        pending = repo.consume_offer(offer.capability, index.to_bytes(32, "big"), device_key(90))
+        if index < count - 1:
+            revoked.append(repo.revoke(pending.device_id))
+    # The last device is still active when storage fills: revocation must work
+    # even though fresh pairing cannot proceed. No reserved evidence slot needed.
+    assert pending is not None
+    approved = repo.approve(pending.device_id, hashlib.sha256(device_key(90)).digest())
+    before = paths.state_path.read_bytes()
+    with pytest.raises(AuthorizationError, match="revocation history full.*new relay profile"):
+        repo.create_offer()
+    assert paths.state_path.read_bytes() == before
+    repo = AuthorizationRepository(paths, clock=lambda: 1000)
+    assert repo.is_authorized(approved.device_id, (count - 1).to_bytes(32, "big"))
+    revoked.append(repo.revoke(approved.device_id))
+    assert repo.revoke(revoked[-1].device_id) == revoked[-1]
+    assert not repo.is_authorized(revoked[-1].device_id, (count - 1).to_bytes(32, "big"))
+    state = StateStore(paths).load()
+    assert len(state["revoked_key_digests"]) == authorization.MAX_REVOKED_KEY_DIGESTS
+    assert len(state["devices"]) == authorization.MAX_DEVICE_RECORDS
+    assert paths.state_path.stat().st_size < MAX_STATE_BYTES
+    with pytest.raises(AuthorizationError, match="revocation history full"):
+        repo.create_offer()
+
+
+@pytest.mark.parametrize("evidence", [None, {}, ["invalid"], [1], ["A" * 44]])
+def test_malformed_revocation_evidence_fails_closed(tmp_path: Path, evidence) -> None:
+    paths = make_paths(tmp_path)
+    StateStore(paths).save({"schema_version": 2, "devices": [], "revoked_key_digests": evidence})
+    with pytest.raises(AuthorizationError, match="authorization state invalid"):
+        AuthorizationRepository(paths).list_devices()
+
+
+def test_missing_duplicate_and_oversized_revocation_evidence_fail_closed(tmp_path: Path) -> None:
+    from mercury_relay_plugin.authorization import MAX_REVOKED_KEY_DIGESTS
+
+    paths = make_paths(tmp_path)
+    store = StateStore(paths)
+    digest = base64.b64encode(hashlib.sha256(device_key(1)).digest()).decode("ascii")
+    for fields in (
+        {},
+        {"revoked_key_digests": [digest, digest]},
+        {"revoked_key_digests": [digest] * (MAX_REVOKED_KEY_DIGESTS + 1)},
+    ):
+        store.save({"schema_version": 2, "devices": [], **fields})
+        with pytest.raises(AuthorizationError, match="authorization state invalid"):
+            AuthorizationRepository(paths).list_devices()
+
+
+def test_compaction_write_failure_preserves_legacy_revocations(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from mercury_relay_plugin.authorization import MAX_DEVICE_RECORDS
+    from mercury_relay_plugin.state_store import StateStoreError
+
+    paths = make_paths(tmp_path)
+    repo = AuthorizationRepository(paths, clock=lambda: 1000)
+    for index in range(MAX_DEVICE_RECORDS):
+        offer = repo.create_offer()
+        pending = repo.consume_offer(offer.capability, device_key(index + 1), device_key(90))
+        repo.revoke(pending.device_id)
+    before = paths.state_path.read_bytes()
+    with monkeypatch.context() as patcher:
+
+        def fail_save(state):
+            raise StateStoreError("injected write failure")
+
+        patcher.setattr(repo.store, "save", fail_save)
+        with pytest.raises(AuthorizationError, match="authorization state unavailable"):
+            repo.create_offer()
+    assert paths.state_path.read_bytes() == before
+    repo = AuthorizationRepository(paths, clock=lambda: 1000)
+    offer = repo.create_offer()
+    for index in range(MAX_DEVICE_RECORDS):
+        with pytest.raises(PairingRejected):
+            repo.consume_offer(offer.capability, device_key(index + 1), device_key(90))
+    assert repo.consume_offer(offer.capability, device_key(100), device_key(90)).status == "pending"
+
+
 def test_cancel_offer_expires_only_the_matching_active_offer(tmp_path: Path) -> None:
     repo = AuthorizationRepository(make_paths(tmp_path), clock=lambda: 1000)
     offer = repo.create_offer()

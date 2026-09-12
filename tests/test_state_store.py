@@ -54,6 +54,21 @@ def test_round_trip_json_object_and_private_mode(tmp_path):
     assert stat.S_IMODE(store.path.parent.stat().st_mode) == 0o700
 
 
+def test_private_state_v2_round_trip_preserves_v1_default(tmp_path):
+    store = make_store(tmp_path)
+    assert store.load()["schema_version"] == 1
+    value = valid_state(schema_version=2, revoked_key_digests=[])
+    store.save(value)
+    assert store.load() == value
+
+
+def test_public_config_rejects_private_state_schema_v2(tmp_path):
+    private_store = make_store(tmp_path)
+    config_store = StateStore(private_store.path.with_name("config.json"), private=False)
+    with pytest.raises(StateStoreError, match="unsupported state schema"):
+        config_store.save(valid_state(schema_version=2))
+
+
 def test_unknown_schema_version_and_boolean_integer_fail_closed(tmp_path):
     store = make_store(tmp_path)
     store.path.parent.mkdir(parents=True)
@@ -62,7 +77,7 @@ def test_unknown_schema_version_and_boolean_integer_fail_closed(tmp_path):
     with pytest.raises(StateStoreError):
         store.load()
 
-    store.path.write_text('{"schema_version": 2}', encoding="utf-8")
+    store.path.write_text('{"schema_version": 3}', encoding="utf-8")
     os.chmod(store.path, 0o600)
     with pytest.raises(StateStoreError):
         store.load()

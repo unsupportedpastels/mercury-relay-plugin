@@ -34,6 +34,8 @@ from .state_store import StateStore, StateStoreError
 MAX_TTL_SECONDS = 600
 DEFAULT_TTL_SECONDS = 300
 MAX_DEVICE_RECORDS = 16
+# Non-evicting evidence, bounded independently of full device history.
+MAX_REVOKED_KEY_DIGESTS = 512
 # Paired phones/tablets allowed at once (pending + authorized). The hosted
 # router multiplexes device sockets and the host holds one lease per
 # (device, channel), so devices and their sessions run concurrently.
@@ -244,8 +246,23 @@ def _validate_int(value: Any) -> None:
 
 
 def _validate_auth_state(state: Mapping[str, Any]) -> None:
-    if not isinstance(state, Mapping) or state.get("schema_version") != 1:
+    if not isinstance(state, Mapping) or state.get("schema_version") not in {1, 2}:
         raise ValueError
+    # Only v2 may contain compact evidence. Old readers reject the version
+    # rather than silently ignoring evidence removed from the device history.
+    if state["schema_version"] == 1 and "revoked_key_digests" in state:
+        raise ValueError
+    if state["schema_version"] == 2 and "revoked_key_digests" not in state:
+        raise ValueError
+    evidence = state.get("revoked_key_digests", [])
+    if not isinstance(evidence, list) or len(evidence) > MAX_REVOKED_KEY_DIGESTS:
+        raise ValueError
+    seen_digests: set[bytes] = set()
+    for value in evidence:
+        digest = _b64decode_exact(value, RAW_BYTES)
+        if digest in seen_digests:
+            raise ValueError
+        seen_digests.add(digest)
     devices = state.get("devices")
     if not isinstance(devices, list) or len(devices) > MAX_DEVICE_RECORDS:
         raise ValueError
@@ -422,6 +439,35 @@ class AuthorizationRepository:
                 changed.append(_summary(updated))
         return changed
 
+    def _make_device_slot(self, state: dict[str, Any]) -> None:
+        """Prune denied history first; compact revoked history without forgetting.
+
+        Evidence and record removal are saved in the same locked transaction.
+        If the evidence budget is full, keep the full record instead. Revoking
+        existing devices must remain possible even when no new key will fit.
+        """
+
+        if len(state["devices"]) < MAX_DEVICE_RECORDS:
+            return
+        candidates = sorted(
+            (item for item in state["devices"] if item["status"] in {"denied", "revoked"}),
+            key=lambda item: (item["status"] != "denied", item["updated_at"], item["device_id"]),
+        )
+        evidence = list(state.get("revoked_key_digests", []))
+        for record in candidates:
+            if record["status"] == "revoked":
+                key = _b64decode_exact(record["device_public_key"], RAW_BYTES)
+                digest = _b64encode(hashlib.sha256(key).digest())
+                if digest not in evidence:
+                    if len(evidence) >= MAX_REVOKED_KEY_DIGESTS:
+                        continue
+                    evidence.append(digest)
+                state["revoked_key_digests"] = evidence
+                state["schema_version"] = 2
+            state["devices"].remove(record)
+            if len(state["devices"]) < MAX_DEVICE_RECORDS:
+                return
+
     def create_offer(self, ttl_seconds: int = DEFAULT_TTL_SECONDS) -> PairingOffer:
         if (
             isinstance(ttl_seconds, bool)
@@ -447,6 +493,11 @@ class AuthorizationRepository:
                 replaced = dict(existing)
                 replaced["status"] = "expired"
                 state["pairing_offer"] = replaced
+            self._make_device_slot(state)
+            if len(state["devices"]) >= MAX_DEVICE_RECORDS:
+                raise AuthorizationError(
+                    "revocation history full; retain this state and use a new relay profile"
+                )
             offer_id = _new_identifier(
                 PAIRING_OFFER_ID_BYTES,
                 {state.get("pairing_offer", {}).get("offer_id", "")},
@@ -520,25 +571,16 @@ class AuthorizationRepository:
 
             # BR-04: timed-out pending records must not consume active slots.
             self._expire_pending_in_state(state, now)
-            # BR-05: denied tombstones must never permanently brick pairing.
-            # Prune the oldest denied records to stay under the record cap;
-            # revoked records are retained as revocation evidence so a revoked
-            # key can never silently re-pair.
-            if len(state["devices"]) >= MAX_DEVICE_RECORDS:
-                denied = sorted(
-                    (record for record in state["devices"] if record["status"] == "denied"),
-                    key=lambda record: (record["updated_at"], record["device_id"]),
-                )
-                overflow = len(state["devices"]) - MAX_DEVICE_RECORDS + 1
-                pruned_ids = {record["device_id"] for record in denied[:overflow]}
-                state["devices"] = [
-                    record for record in state["devices"] if record["device_id"] not in pruned_ids
-                ]
+            self._make_device_slot(state)
 
             active_count = sum(
                 1 for record in state["devices"] if record["status"] in {"pending", "authorized"}
             )
-            revoked_key = False
+            key_digest = hashlib.sha256(public_key).digest()
+            revoked_key = any(
+                hmac.compare_digest(_b64decode_exact(value, RAW_BYTES), key_digest)
+                for value in state.get("revoked_key_digests", [])
+            )
             for record in state["devices"]:
                 revoked_key = revoked_key or (
                     record["status"] == "revoked"

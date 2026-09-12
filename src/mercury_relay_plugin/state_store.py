@@ -1,9 +1,9 @@
 """Bounded, owner-private JSON state storage for the relay plugin.
 
-This module intentionally implements persistence rather than migrations or
-cryptography.  Only schema version 1 is accepted.  Reads are bounded before
-JSON parsing, and writes use a same-directory temporary file followed by file
-and directory fsyncs and an atomic replace.
+This module implements persistence rather than cryptography. Private state
+accepts schema versions 1 and 2; authorization owns the lazy v1-to-v2 migration.
+Public config remains v1. Reads are bounded before JSON parsing, and writes use
+same-directory temporary files, file/directory fsyncs, and atomic replacement.
 """
 
 from __future__ import annotations
@@ -32,7 +32,8 @@ from .config import (
 )
 from .strict_json import StrictJsonError, loads_strict
 
-STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 2
+_SUPPORTED_STATE_SCHEMA_VERSIONS = frozenset({1, STATE_SCHEMA_VERSION})
 MAX_STATE_BYTES = 64 * 1024
 _INTEGER_STATE_FIELDS = frozenset(
     {
@@ -114,7 +115,11 @@ def _validate_state_object(value: Mapping[str, Any]) -> dict[str, Any]:
         raise StateStoreError("state must be a JSON object")
     result = dict(value)
     version = result.get("schema_version")
-    if isinstance(version, bool) or not isinstance(version, int) or version != STATE_SCHEMA_VERSION:
+    if (
+        isinstance(version, bool)
+        or not isinstance(version, int)
+        or version not in _SUPPORTED_STATE_SCHEMA_VERSIONS
+    ):
         raise StateStoreError("unsupported state schema")
     _validate_json_values(result)
     _validate_device_ids(result)
@@ -309,6 +314,8 @@ class StateStore:
                     raise StateStoreError("state validator returned a non-object")
                 validated = dict(candidate)
                 _validate_state_object(validated)
+            if self.path.name != STATE_FILE_NAME and validated["schema_version"] != 1:
+                raise StateStoreError("unsupported state schema")
             return validated
         except StateStoreError:
             raise
