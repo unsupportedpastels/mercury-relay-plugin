@@ -8,6 +8,7 @@ import re
 from collections.abc import Callable
 from contextlib import suppress
 from dataclasses import dataclass
+from functools import partial
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -38,6 +39,7 @@ from .session_lease import (
     SessionLeaseManager,
 )
 from .session_reads import RELAY_PUSH_METHODS, SessionReads
+from .shutdown import await_cleanup, cleanup_steps
 from .strict_json import loads_strict
 
 AUTH_ENVELOPE_TYPE = "controller.open"
@@ -220,6 +222,7 @@ class DeviceAdmissionService:
         )
         self.push: PushBridge | None = None
         self._admission_lock = asyncio.Lock()
+        self._close_task: asyncio.Task | None = None
         self._recovery_store: RecoveryStore | None = None
         # Set by the connector when a routing issuer exists: every attach then
         # renews the device's router token inside the encrypted preamble.
@@ -570,12 +573,13 @@ class DeviceAdmissionService:
     async def close(self) -> None:
         """Release every retained lease exactly once at plugin shutdown."""
 
-        await self.leases.close()
-        if self.push is not None:
-            await self.push.close()
-        if self.metrics is not None:
-            with suppress(Exception):
-                self.metrics.update_active_leases(0)
-        if self.journal is not None:
-            with suppress(Exception):
-                self.journal.close()
+        if self._close_task is None:
+            steps: list[Callable[[], object]] = [self.leases.close]
+            if self.push is not None:
+                steps.append(self.push.close)
+            if self.metrics is not None:
+                steps.append(partial(self.metrics.update_active_leases, 0))
+            if self.journal is not None:
+                steps.append(self.journal.close)
+            self._close_task = asyncio.create_task(cleanup_steps(steps))
+        await await_cleanup(self._close_task)
