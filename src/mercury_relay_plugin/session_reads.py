@@ -249,7 +249,9 @@ class SessionReads:
                     offset=offset,
                     order_by_last_active=True,
                     compact_rows=True,
-                    include_pinned=True,
+                    # Pins remain ordinary page rows; backfilling them would
+                    # bypass the limit and repeat pins even beyond EOF.
+                    include_pinned=False,
                 )
                 # exclude_children keeps the total consistent with the rows
                 # list_sessions_rich surfaces (Hermes pairs them the same way).

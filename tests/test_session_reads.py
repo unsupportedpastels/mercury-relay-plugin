@@ -126,6 +126,44 @@ def test_reads_match_retained_fixture_envelopes_and_close_every_handle() -> None
     asyncio.run(exercise())
 
 
+@pytest.mark.parametrize("limit", [1, 2])
+def test_session_list_paginates_pins_without_backfilling_other_pages(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, limit: int,
+) -> None:
+    SessionDB = contract_import("hermes_state").SessionDB
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    db_path = tmp_path / "state.db"
+    expected = {f"fixture-page-{index}" for index in range(5)}
+    db = SessionDB(db_path)
+    try:
+        for index, session_id in enumerate(sorted(expected)):
+            db.create_session(session_id, source="mercury")
+            db.append_message(session_id, "user", content="Synthetic pagination fixture")
+            db.set_session_pinned(session_id, index % 2 == 0)
+    finally:
+        db.close()
+
+    async def exercise() -> None:
+        reads = SessionReads(db_opener=lambda _: SessionDB(db_path, read_only=True))
+        seen: list[str] = []
+        for offset in range(0, len(expected) + limit, limit):
+            result = await reads.dispatch("relay.sessions.list", {
+                "limit": limit, "offset": offset,
+            })
+            rows = result["sessions"]
+            assert result["total"] == len(expected)
+            assert len(rows) <= limit
+            seen.extend(row["id"] for row in rows)
+        assert len(seen) == len(expected)
+        assert set(seen) == expected
+        end = await reads.dispatch("relay.sessions.list", {
+            "limit": limit, "offset": len(expected),
+        })
+        assert end["sessions"] == []
+
+    asyncio.run(exercise())
+
+
 @pytest.mark.parametrize("order", ["oldest", "latest"])
 def test_transcript_filters_stored_internal_kinds_without_losing_page_positions(
     tmp_path: Path,
