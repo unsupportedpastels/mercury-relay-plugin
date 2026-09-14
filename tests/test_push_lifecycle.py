@@ -69,8 +69,13 @@ def test_missing_httpx_import_keeps_ciphertext_connector(tmp_path, monkeypatch):
     asyncio.run(run())
 
 
-@pytest.mark.parametrize("enabled", [None, "0", "true", "1"])
-def test_production_opt_in_reuses_origin_and_host_issuer(tmp_path, monkeypatch, enabled):
+@pytest.mark.parametrize(
+    ("enabled", "expected"),
+    [(None, True), ("0", False), ("true", True), ("1", True)],
+)
+def test_push_defaults_on_and_accepts_explicit_disable(
+    tmp_path, monkeypatch, enabled, expected
+):
     async def run():
         service, runtime, _, _, _, _, offer = await admitted_peer(tmp_path, enabled=False)
         try:
@@ -81,7 +86,7 @@ def test_production_opt_in_reuses_origin_and_host_issuer(tmp_path, monkeypatch, 
             else:
                 monkeypatch.setenv("MERCURY_RELAY_PUSH_ENABLED", enabled)
             connector = api._default_connector_provider(service)
-            assert (service.push is not None) == (enabled == "1")
+            assert (service.push is not None) is expected
             if service.push is not None:
                 from mercury_relay_plugin.config import load_public_config
                 from mercury_relay_plugin.relay_client import host_socket_url

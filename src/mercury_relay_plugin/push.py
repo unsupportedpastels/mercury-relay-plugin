@@ -1,4 +1,4 @@
-"""Opt-in generic and end-to-end encrypted push bridge.
+"""Default-on generic and end-to-end encrypted push bridge.
 
 The single asynchronous sender serializes registry changes and wakes. Preview
 keys are scoped to the authenticated installation/device/authorization epoch,

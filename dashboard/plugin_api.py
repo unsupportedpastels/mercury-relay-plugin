@@ -88,7 +88,8 @@ def _default_connector_provider(admission: DeviceAdmissionService):
     )
     import os
 
-    if os.environ.get("MERCURY_RELAY_PUSH_ENABLED") == "1":
+    push_enabled = os.environ.get("MERCURY_RELAY_PUSH_ENABLED") != "0"
+    if push_enabled:
         try:
             from mercury_relay_plugin.push import PushBridge
 
@@ -108,7 +109,7 @@ def _default_connector_provider(admission: DeviceAdmissionService):
             )
             admission.push.start()
         except Exception:
-            # Optional push must not strand existing ciphertext clients.
+            # Push setup must not strand existing ciphertext clients.
             admission.push = None
     return RelayConnectorService(
         admission, connector, routing_issuer=issuer, journal=admission.journal
