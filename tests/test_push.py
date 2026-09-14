@@ -20,7 +20,13 @@ from mercury_relay_plugin.secure_channel import NoiseChannel
 
 
 async def admitted_peer(
-    tmp_path, *, enabled=True, handler=None, preview_enabled=False, wall_clock=None
+    tmp_path,
+    *,
+    enabled=True,
+    handler=None,
+    preview_enabled=False,
+    production_enabled=False,
+    wall_clock=None,
 ):
     from mercury_relay_plugin.push import PushBridge
     from mercury_relay_plugin.routing_auth import RoutingIssuerStore
@@ -61,6 +67,7 @@ async def admitted_peer(
             authorized=lambda d, e: service._epoch(d) == e,
             transport=httpx.MockTransport(peer),
             preview_enabled=preview_enabled,
+            production_enabled=production_enabled,
             **({"wall_clock": wall_clock} if wall_clock is not None else {}),
         )
     mobile, host = channels()

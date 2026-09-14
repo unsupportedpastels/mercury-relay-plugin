@@ -41,6 +41,11 @@ QUEUE_SIZE = 64
 TIMEOUT = 5.0
 PENDING_ROUTE_TTL = 300.0
 MAX_PENDING_ROUTES = MAX_ROWS
+PUSH_ENVIRONMENTS_CAPABILITY = {
+    "version": 1,
+    "environments": ["sandbox", "production"],
+    "generic_register_version": 2,
+}
 INPUT_EVENTS = frozenset(
     {
         "approval.request",
@@ -133,7 +138,6 @@ def _row_v3_valid(row):
         or row["mode"] not in {"generic", "preview"}
         or not isinstance(row["environment"], str)
         or row["environment"] not in {"sandbox", "production"}
-        or (row["mode"] == "generic" and row["environment"] != "sandbox")
     ):
         return False
     if row["mode"] == "generic":
@@ -157,6 +161,7 @@ class PushBridge:
         clock=time.monotonic,
         wall_clock=time.time,
         preview_enabled=False,
+        production_enabled=False,
     ):
         if not isinstance(installation_id, bytes) or len(installation_id) != 32:
             raise ValueError("invalid installation")
@@ -170,6 +175,7 @@ class PushBridge:
         self.clock = clock
         self.wall_clock = wall_clock
         self.preview_enabled = preview_enabled is True
+        self.production_enabled = production_enabled is True
         paths.ensure()
         self.path = paths.agent_dir / "push.json"
         self.rows = {}
@@ -247,6 +253,11 @@ class PushBridge:
             if row["status"] in {"active", "pending"} and (
                 not self._valid_scope(row)
                 or (row["mode"] == "preview" and not self.preview_enabled)
+                or (
+                    row["mode"] == "generic"
+                    and row["environment"] == "production"
+                    and not self.production_enabled
+                )
                 or (row["status"] == "pending" and row["mode"] == "generic")
             ):
                 self._make_debt(handle)
@@ -274,6 +285,11 @@ class PushBridge:
     def capabilities(self):
         value: dict[str, object] = {"push_notifications_v1": True, "push_notifications_v2": True}
         value["push_notification_routes"] = {"version": 1, "inspect_method": "relay.push.inspect"}
+        if self.production_enabled:
+            value["push_environments"] = {
+                **PUSH_ENVIRONMENTS_CAPABILITY,
+                "environments": list(PUSH_ENVIRONMENTS_CAPABILITY["environments"]),
+            }
         if self.preview_available:
             value["push_previews"] = dict(PREVIEW_CAPABILITY)
         return value
@@ -466,6 +482,7 @@ class PushBridge:
                 raise SessionReadsError("invalid_params")
             self.revoke(device, epoch)
             return {"registered": False}
+        generic_version = None
         if method == "relay.push.preview.register":
             if not self.preview_available:
                 raise SessionReadsError("push_unavailable")
@@ -477,11 +494,24 @@ class PushBridge:
             preview = self._parse_preview(params.get("preview"))
             mode = "preview"
         elif method == "relay.push.register":
-            if set(params) != {"device_token", "environment"}:
+            legacy = set(params) == {"device_token", "environment"}
+            versioned = set(params) == {"version", "device_token", "environment"}
+            if not legacy and not versioned:
                 raise SessionReadsError("invalid_params")
             token, environment = params.get("device_token"), params.get("environment")
-            if not self._validate_token(token) or environment != "sandbox":
+            if (
+                not self._validate_token(token)
+                or environment not in {"sandbox", "production"}
+                or (legacy and environment != "sandbox")
+                or (
+                    versioned
+                    and (type(params.get("version")) is not int or params["version"] != 2)
+                )
+            ):
                 raise SessionReadsError("invalid_params")
+            if environment == "production" and not self.production_enabled:
+                raise SessionReadsError("push_unavailable")
+            generic_version = 2 if versioned else None
             preview, mode = None, "generic"
         else:
             raise SessionReadsError("invalid_params")
@@ -513,6 +543,8 @@ class PushBridge:
             fields = {"device_token": token, "environment": environment}
             if mode == "preview":
                 fields["preview"] = {"version": 1, "key_id": preview["key_id"]}
+            elif generic_version is not None:
+                fields["version"] = generic_version
             future = asyncio.get_running_loop().create_future()
             if not self._enqueue("register", handle, fields, future):
                 if row["status"] == "pending":

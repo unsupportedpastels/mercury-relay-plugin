@@ -1,0 +1,22 @@
+{
+  "schema_version": "mercury.push-environments.corpus.v1",
+  "synthetic": true,
+  "contains_secrets": false,
+  "contains_live_hosts": false,
+  "artifacts": {
+    "corpus.json": {
+      "bytes": 2743,
+      "sha256": "3eddf2bb10bdefefc1efe1967846c65bfb7643593c75b2a63ddf88dc5ac7833b"
+    }
+  },
+  "source_refs": [
+    {
+      "path": "src/mercury_relay_plugin/push.py",
+      "symbol": "PUSH_ENVIRONMENTS_CAPABILITY"
+    },
+    {
+      "path": "src/mercury_relay_plugin/push.py",
+      "symbol": "PushBridge.dispatch"
+    }
+  ]
+}

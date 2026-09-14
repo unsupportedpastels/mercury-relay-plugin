@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "capability": {
+    "version": 1,
+    "environments": ["sandbox", "production"],
+    "generic_register_version": 2
+  },
+  "cases": [
+    {
+      "name": "legacy-sandbox",
+      "params": {"device_token": "abababababababababababababababababababababababababababababababab", "environment": "sandbox"},
+      "production_enabled": false,
+      "accepted": true,
+      "forwarded_version": null
+    },
+    {
+      "name": "version2-sandbox",
+      "params": {"version": 2, "device_token": "abababababababababababababababababababababababababababababababab", "environment": "sandbox"},
+      "production_enabled": false,
+      "accepted": true,
+      "forwarded_version": 2
+    },
+    {
+      "name": "version2-production-enabled",
+      "params": {"version": 2, "device_token": "abababababababababababababababababababababababababababababababab", "environment": "production"},
+      "production_enabled": true,
+      "accepted": true,
+      "forwarded_version": 2
+    },
+    {
+      "name": "version2-production-disabled",
+      "params": {"version": 2, "device_token": "abababababababababababababababababababababababababababababababab", "environment": "production"},
+      "production_enabled": false,
+      "accepted": false,
+      "error": "push_unavailable"
+    },
+    {
+      "name": "legacy-production-stays-rejected",
+      "params": {"device_token": "abababababababababababababababababababababababababababababababab", "environment": "production"},
+      "production_enabled": true,
+      "accepted": false,
+      "error": "invalid_params"
+    },
+    {
+      "name": "bool-version-rejected",
+      "params": {"version": true, "device_token": "abababababababababababababababababababababababababababababababab", "environment": "sandbox"},
+      "production_enabled": true,
+      "accepted": false,
+      "error": "invalid_params"
+    },
+    {
+      "name": "unknown-version-rejected",
+      "params": {"version": 1, "device_token": "abababababababababababababababababababababababababababababababab", "environment": "sandbox"},
+      "production_enabled": true,
+      "accepted": false,
+      "error": "invalid_params"
+    },
+    {
+      "name": "unknown-environment-rejected",
+      "params": {"version": 2, "device_token": "abababababababababababababababababababababababababababababababab", "environment": "development"},
+      "production_enabled": true,
+      "accepted": false,
+      "error": "invalid_params"
+    },
+    {
+      "name": "extra-field-rejected",
+      "params": {"version": 2, "device_token": "abababababababababababababababababababababababababababababababab", "environment": "sandbox", "preview": {}},
+      "production_enabled": true,
+      "accepted": false,
+      "error": "invalid_params"
+    }
+  ]
+}
