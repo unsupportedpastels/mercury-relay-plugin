@@ -108,6 +108,27 @@ and returns `{registered: false}`. These methods are handled inside the plugin,
 not forwarded to the official Hermes gateway. Callers cannot choose a device ID
 or epoch.
 
+Upgraded hosts also accept versioned generic registration with exact params
+`{version: 2, device_token, environment}`. Version 2 may use `sandbox` or
+`production`; the host forwards `version: 2` to the Worker. Legacy params stay
+sandbox-only and are forwarded without a version. Production generic push is a
+separate operator opt-in: after deploying and proving a compatible Worker, set
+both `MERCURY_RELAY_PUSH_ENABLED=1` and
+`MERCURY_RELAY_PUSH_PRODUCTION_ENABLED=1` in the plugin host launch environment
+and perform a normal lifecycle restart. The production flag defaults off and
+only the exact string `1` enables it. While enabled, the host advertises:
+
+```json
+{"push_environments":{"version":1,"environments":["sandbox","production"],"generic_register_version":2}}
+```
+
+This capability is additive; existing push notification, route-inspection, and
+encrypted-preview capabilities are unchanged. Disabling the production flag
+fences a persisted production generic binding and retains bounded unregister
+debt for cleanup rather than waking or relabeling it as sandbox. The synthetic
+cross-stack acceptance corpus is
+[`protocol/vectors/push-environments/corpus.json`](protocol/vectors/push-environments/corpus.json).
+
 V2 adds the encrypted local RPC `relay.push.resolve` with exactly
 `{wake_handle}`. After a generic push, the authorized device can reconnect and
 consume at most one pending route as

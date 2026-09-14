@@ -102,6 +102,9 @@ def _default_connector_provider(admission: DeviceAdmissionService):
                     config.get("push_previews") is True
                     and os.environ.get("MERCURY_RELAY_PUSH_PREVIEW_ENABLED") == "1"
                 ),
+                production_enabled=(
+                    os.environ.get("MERCURY_RELAY_PUSH_PRODUCTION_ENABLED") == "1"
+                ),
             )
             admission.push.start()
         except Exception:

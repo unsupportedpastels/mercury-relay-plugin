@@ -133,6 +133,33 @@ def test_preview_capability_requires_sender_flag_and_public_config(tmp_path, mon
     asyncio.run(run())
 
 
+@pytest.mark.parametrize("production_flag", [None, "0", "true", "1"])
+def test_production_generic_flag_threads_exactly_and_defaults_off(
+    tmp_path, monkeypatch, production_flag
+):
+    async def run():
+        service, runtime, _, _, _, _, _ = await admitted_peer(tmp_path, enabled=False)
+        try:
+            api = contract_import("dashboard.plugin_api")
+            monkeypatch.setenv("MERCURY_RELAY_PUSH_ENABLED", "1")
+            if production_flag is None:
+                monkeypatch.delenv("MERCURY_RELAY_PUSH_PRODUCTION_ENABLED", raising=False)
+            else:
+                monkeypatch.setenv("MERCURY_RELAY_PUSH_PRODUCTION_ENABLED", production_flag)
+            connector = api._default_connector_provider(service)
+            assert service.push is not None
+            assert service.push.production_enabled is (production_flag == "1")
+            assert ("push_environments" in service.push.capabilities) is (
+                production_flag == "1"
+            )
+            await connector.close()
+        finally:
+            await service.close()
+            await runtime.close()
+
+    asyncio.run(run())
+
+
 def test_timeout_redirect_and_unauthorized_epoch_fail_closed(tmp_path):
     async def run():
         service, runtime, admitted, _, _, _, offer = await admitted_peer(tmp_path, enabled=False)
