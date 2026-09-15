@@ -83,7 +83,7 @@ class LeaseLimits:
     max_events: int = 256
     max_event_bytes: int = 4_194_304
     max_event_age_seconds: float = 600.0
-    detach_ttl_seconds: float = 300.0
+    detach_ttl_seconds: float = 1800.0
     max_tracked_submissions: int = 64
 
     def validate(self) -> LeaseLimits:
