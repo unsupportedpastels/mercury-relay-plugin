@@ -301,6 +301,12 @@ def test_one_attachment_with_observer_safe_replay_after_cursor() -> None:
     asyncio.run(exercise())
 
 
+def test_default_detach_ttl_covers_normal_mobile_backgrounding() -> None:
+    """An idle phone must have time to return before its controller is released."""
+
+    assert LeaseLimits().detach_ttl_seconds >= 30 * 60
+
+
 def test_detach_ttl_expiry_releases_exactly_once() -> None:
     async def exercise() -> None:
         websocket = VirtualWebSocket()
