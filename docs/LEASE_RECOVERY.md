@@ -95,8 +95,10 @@ child progress, evicted evidence and unobserved work remain unknown.
 
 ## Bounds and release behavior
 
-- Existing lease limits: 256 frames / 4 MiB, ten-minute frame age, five-minute
-  detached TTL, at most eight installation leases by runtime default.
+- Existing lease limits: 256 frames / 4 MiB, ten-minute frame age, 30-minute
+  detached TTL, at most eight installation leases by runtime default. Detached
+  leases retain their inner controllers and continue counting toward that
+  eight-lease capacity until reattachment, release, or TTL expiry.
 - V1 ring overflow drops old replay and reports a gap **without killing the
   accepted inner controller solely because replay filled**. Reconcile child
   snapshots and authoritative transcripts; do not treat a gapped stream as a
